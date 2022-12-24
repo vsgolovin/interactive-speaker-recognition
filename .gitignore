@@ -1,5 +1,7 @@
 data/TIMIT
+data/words
 extras/
+.vscode
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
