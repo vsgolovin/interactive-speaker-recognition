@@ -88,13 +88,7 @@ class Actor(nn.Module):
     def __init__(self, input_size: int, num_actions: int):
         super().__init__()
         self.num_actions = num_actions
-        self.model = nn.Sequential(
-            nn.Linear(input_size, 64),
-            nn.Tanh(),
-            nn.Linear(64, 64),
-            nn.Tanh(),
-            nn.Linear(64, num_actions)
-        )
+        self.model = get_ppo_fc_model(input_size, num_actions)
 
     def forward(self, x: Tensor) -> Tensor:
         return self.model(x)
