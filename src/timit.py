@@ -7,6 +7,8 @@ import soundfile as sf
 
 PathLike = Union[Path, str]
 
+KALDI_ROOT = Path("/home/vsg/repos/kaldi")
+
 
 class TimitCorpus:
     def __init__(self, path: PathLike):
@@ -33,7 +35,8 @@ class TimitCorpus:
     def split_common_sentences(self, save_to: PathLike) -> None:
         # output directory
         save_to = Path(save_to)
-        assert save_to.exists() and save_to.is_dir()
+        assert not save_to.exists()
+        save_to.mkdir(parents=True)
 
         # get waveforms of words from SA1 and SA2 for every speaker
         for spkr_id, spkr_info in self.spkrinfo.iterrows():
@@ -49,6 +52,52 @@ class TimitCorpus:
                         data=wfm[start:end],
                         samplerate=sr
                     )
+
+    def kaldi_data_prep(self, words_dir: PathLike,
+                        output_dir: PathLike = "data/kaldi"):
+        """
+        Create files needed for extracting embeddings with Kaldi.
+        """
+        # extract single word recordings if not done previously
+        words_dir = Path(words_dir)
+        if not words_dir.exists():
+            self.split_common_sentences(words_dir)
+
+        # check for sph2pipe
+        sph2pipe = KALDI_ROOT / "tools/sph2pipe_v2.5/sph2pipe"
+        assert sph2pipe.exists()
+        sph2pipe_str = str(sph2pipe) + " -f wav"
+
+        # create wav.scp and utt2spk files for every subset
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        for subset in ("train", "test"):
+            subset_dir = Path(output_dir) / subset
+            subset_dir.mkdir(exist_ok=True)
+
+            # utterance id -> wav file location
+            wav_scp = open(subset_dir / "wav.scp", "w")
+            # utterance id -> speaker id and reverse
+            utt2spk = open(subset_dir / "utt2spk", "w")
+            spk2utt = open(subset_dir / "spk2utt", "w")
+
+            for spkr_id, spkr_info in self.spkrinfo.iterrows():
+                spkr_dir = self._get_speaker_directory(spkr_id, spkr_info)
+                spk2utt.write(spkr_id)
+                for sentence_id in sorted(self.spkrsent[spkr_id]):
+                    utt_id = spkr_id + "_" + sentence_id
+                    wav_file = spkr_dir / (sentence_id + ".WAV")
+                    assert wav_file.exists()
+                    wav_scp.write(" ".join(
+                        [utt_id, sph2pipe_str, str(wav_file.absolute()), "|\n"]
+                    ))
+                    utt2spk.write(f"{utt_id} {spkr_id}\n")
+                    spk2utt.write(f" {utt_id}")
+                spk2utt.write("\n")
+
+            wav_scp.close()
+            utt2spk.close()
+            spk2utt.close()
 
 
 def read_prompts(file: PathLike) -> dict:
@@ -144,4 +193,4 @@ def read_wrd_file(file: PathLike) -> Sequence[Tuple[int, int, str]]:
 
 if __name__ == "__main__":
     timit = TimitCorpus("data/TIMIT")
-    timit.split_common_sentences("data/words")
+    timit.kaldi_data_prep("data/words", "data/kaldi")

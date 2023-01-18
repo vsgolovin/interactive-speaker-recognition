@@ -1,5 +1,6 @@
 data/TIMIT
 data/words
+data/kaldi
 extras/
 .vscode
 
