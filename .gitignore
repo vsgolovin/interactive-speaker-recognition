@@ -1,6 +1,4 @@
-data/TIMIT
-data/words
-data/kaldi
+data/*
 extras/
 .vscode
 
