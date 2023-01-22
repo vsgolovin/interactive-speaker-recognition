@@ -1,13 +1,9 @@
-from typing import Optional, Sequence, Tuple, Union
+from typing import Optional, Sequence, Tuple
 from pathlib import Path
 import librosa
 import pandas as pd
 import soundfile as sf
-
-
-PathLike = Union[Path, str]
-
-KALDI_ROOT = Path("/home/vsg/repos/kaldi")
+from common import PathLike, KALDI_ROOT
 
 
 class TimitCorpus:
