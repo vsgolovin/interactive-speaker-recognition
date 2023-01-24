@@ -28,7 +28,8 @@ class TimitCorpus:
         assert spkr_dir.exists(), f"{spkr_dir} not found"
         return spkr_dir
 
-    def split_common_sentences(self, save_to: PathLike) -> None:
+    def split_common_sentences(self, save_to: PathLike,
+                               drop: Sequence[str] = ["an"]) -> None:
         # output directory
         save_to = Path(save_to)
         assert not save_to.exists()
@@ -43,6 +44,8 @@ class TimitCorpus:
                 wfm, sr = librosa.load(spkr_inp_dir / f"{pid}.WAV", sr=16000)
                 timestamps = read_wrd_file(spkr_inp_dir / f"{pid}.WRD")
                 for start, end, word in timestamps:
+                    if word.lower() in drop:
+                        continue
                     sf.write(
                         file=spkr_out_dir / f"{word.upper()}.WAV",
                         data=wfm[start:end],
