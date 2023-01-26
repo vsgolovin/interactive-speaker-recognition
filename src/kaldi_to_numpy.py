@@ -57,6 +57,8 @@ class XVectorPipeline:
 
 
 if __name__ == "__main__":
+    from pathlib import Path
+
     # map speaker ids to integers
     spkrinfo = read_spkrinfo("data/TIMIT/DOC/SPKRINFO.TXT")
     spkrs = np.array(spkrinfo.index)
@@ -77,7 +79,9 @@ if __name__ == "__main__":
                                 spkrs, pipeline.speaker_embeddings)
 
     # test subset (transform)
-    keys, embeddings = read_vectors("data/xvectors_test/xvector.scp")
-    X_processed = pipeline.transform(np.stack(embeddings))
-    export_processed_embeddings("data/xvectors_test/xvector.npz",
-                                keys, X_processed)
+    for subset in ["test", "words"]:
+        data_dir = Path(f"data/xvectors_{subset}")
+        keys, embeddings = read_vectors(data_dir / "xvector.scp")
+        X_processed = pipeline.transform(np.stack(embeddings))
+        export_processed_embeddings(data_dir / "xvector.npz",
+                                    keys, X_processed)

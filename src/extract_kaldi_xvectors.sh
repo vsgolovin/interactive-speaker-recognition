@@ -9,7 +9,7 @@
 # * copy generated files (`xvectors_*` directories) to `data/`
 
 # extract features
-for datadir in 'train' 'test'; do
+for datadir in 'train' 'test' 'words'; do
   steps/make_mfcc.sh --nj 30 --mfcc-config conf/mfcc.conf \
     data/${datadir}
   utils/fix_data_dir.sh data/${datadir}
@@ -19,7 +19,7 @@ for datadir in 'train' 'test'; do
 done
 
 # extract x-vectors
-for data in 'train' 'test'; do
+for data in 'train' 'test' 'words'; do
   sid/nnet3/xvector/extract_xvectors.sh --nj 30 \
     exp/xvector_nnet_1a data/${data} \
     data/xvectors_${data}
