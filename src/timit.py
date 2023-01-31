@@ -88,7 +88,8 @@ class TimitCorpus:
         # create wav.scp, utt2spk and spk2utt files for every subset
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-        for subset in ("train", "test"):
+        label2subset = {"TRN": "train", "TST": "test"}
+        for subset in label2subset.values():
             subset_dir = output_dir / subset
             subset_dir.mkdir(exist_ok=True)
 
@@ -99,6 +100,9 @@ class TimitCorpus:
             spk2utt = open(subset_dir / "spk2utt", "w")
 
             for spkr_id, spkr_info in self.spkrinfo.iterrows():
+                # check if speaker is in the current subset
+                if label2subset[spkr_info["Use"]] != subset:
+                    continue
                 spkr_dir = self._get_speaker_directory(spkr_id, spkr_info)
                 spk2utt.write(spkr_id)
                 for sentence_id in sorted(self.spkrsent[spkr_id]):

@@ -18,6 +18,17 @@ def export_processed_embeddings(fname: PathLike, keys: Iterable[str],
     np.savez(fname, **data)
 
 
+def get_speaker_embeddings(X: np.ndarray, y: np.ndarray
+                           ) -> Tuple[np.ndarray, np.ndarray]:
+    "Average embeddings for every speaker"
+    speakers = np.sort(np.unique(y))
+    embeddings = np.zeros((len(speakers), X.shape[1]))
+    for i, speaker in enumerate(speakers):
+        mask = (y == speaker)
+        embeddings[i] = np.mean(X[mask], axis=0)
+    return embeddings, speakers
+
+
 class XVectorPipeline:
     "Pipeline for processing raw x-vectors"
     def __init__(self, n_components: int = 128):
@@ -27,27 +38,23 @@ class XVectorPipeline:
         self.mu = np.zeros(n_components)
         self.sigma = None
 
-    def fit(self, X: np.ndarray, y: np.ndarray):
-        n_speakers = len(np.unique(y))
-        # labels have to be integers from 0 to n_speakers - 1
-        assert n_speakers == max(y) + 1, "Invalid labels"
-
+    def fit(self, X: np.ndarray, y: np.ndarray
+            ) -> Tuple[np.ndarray, np.ndarray]:
+        "Returns transformed embeddings for every speaker"
         # dimensionality reduction
-        self.lda.fit(X, y)
-        X_compressed = self.lda.transform(X)
+        X_compressed = self.lda.fit_transform(X, y)
 
         # get speaker embeddings by averaging
-        self.speaker_embeddings = np.zeros((n_speakers, self.n_components))
-        for i in range(n_speakers):
-            mask = (y == i)
-            self.speaker_embeddings[i, :] = np.mean(X_compressed[mask], axis=0)
+        spkr_emb, speakers = get_speaker_embeddings(X_compressed, y)
 
         # normalize speaker embeddings
-        self.mu = np.mean(self.speaker_embeddings, axis=0)
-        self.speaker_embeddings -= self.mu
-        norms = np.linalg.norm(self.speaker_embeddings, ord=2, axis=1)
+        self.mu = np.mean(spkr_emb, axis=0)
+        spkr_emb -= self.mu
+        norms = np.linalg.norm(spkr_emb, ord=2, axis=1)
         self.sigma = np.mean(norms)
-        self.speaker_embeddings /= self.sigma
+        spkr_emb /= self.sigma
+
+        return spkr_emb, speakers
 
     def transform(self, X: np.ndarray) -> np.ndarray:
         assert self.sigma is not None, "Perform `fit` first"
@@ -59,29 +66,41 @@ class XVectorPipeline:
 if __name__ == "__main__":
     from pathlib import Path
 
+    def get_subset_dir(subset: str) -> Path:
+        return Path(f"data/xvectors_{subset}")
+
     # map speaker ids to integers
     spkrinfo = read_spkrinfo("data/TIMIT/DOC/SPKRINFO.TXT")
     spkrs = np.array(spkrinfo.index)
     spkr2token = {spkr: i for i, spkr in enumerate(spkrs)}
+    token2spkr = dict(enumerate(spkrs))
 
     pipeline = XVectorPipeline(n_components=128)
 
-    # train subset (fit + transform)
-    keys, embeddings = read_vectors("data/xvectors_train/xvector.scp")
+    # train subset (fit, transform and average embeddings)
+    subset_dir = get_subset_dir("train")
+    keys, embeddings = read_vectors(subset_dir / "xvector.scp")
     y = np.array([spkr2token[k.split("_")[0]] for k in keys])
     X = np.stack(embeddings)
-    pipeline.fit(X, y)
-    X_processed = pipeline.transform(X)
+    spk_embeddings, spk_y = pipeline.fit(X, y)
+    export_processed_embeddings(subset_dir / "spk_xvector.npz",
+                                [token2spkr[token] for token in spk_y],
+                                embeddings)
 
-    export_processed_embeddings("data/xvectors_train/xvector.npz",
-                                keys, X_processed)
-    export_processed_embeddings("data/xvectors_train/spk_xvector.npz",
-                                spkrs, pipeline.speaker_embeddings)
+    # test subset (transform and average)
+    subset_dir = get_subset_dir("test")
+    keys, embeddings = read_vectors(subset_dir / "xvector.scp")
+    y = np.array([spkr2token[k.split("_")[0]] for k in keys])
+    X = np.stack(embeddings)
+    X_processed = pipeline.transform(X)
+    embeddings, spk_y = get_speaker_embeddings(X_processed, y)
+    export_processed_embeddings(subset_dir / "spk_xvector.npz",
+                                [token2spkr[token] for token in spk_y],
+                                embeddings)
 
     # test subset (transform)
-    for subset in ["test", "words"]:
-        data_dir = Path(f"data/xvectors_{subset}")
-        keys, embeddings = read_vectors(data_dir / "xvector.scp")
-        X_processed = pipeline.transform(np.stack(embeddings))
-        export_processed_embeddings(data_dir / "xvector.npz",
-                                    keys, X_processed)
+    subset_dir = get_subset_dir("words")
+    keys, embeddings = read_vectors(subset_dir / "xvector.scp")
+    X_processed = pipeline.transform(np.stack(embeddings))
+    export_processed_embeddings("data/xvectors_words/xvector.npz",
+                                keys, X_processed)
