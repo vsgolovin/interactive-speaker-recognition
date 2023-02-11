@@ -85,7 +85,7 @@ if __name__ == "__main__":
     spk_embeddings, spk_y = pipeline.fit(X, y)
     export_processed_embeddings(subset_dir / "spk_xvector.npz",
                                 [token2spkr[token] for token in spk_y],
-                                embeddings)
+                                spk_embeddings)
 
     # test subset (transform and average)
     subset_dir = get_subset_dir("test")
@@ -96,9 +96,9 @@ if __name__ == "__main__":
     embeddings, spk_y = get_speaker_embeddings(X_processed, y)
     export_processed_embeddings(subset_dir / "spk_xvector.npz",
                                 [token2spkr[token] for token in spk_y],
-                                embeddings)
+                                spk_embeddings)
 
-    # test subset (transform)
+    # words (transform)
     subset_dir = get_subset_dir("words")
     keys, embeddings = read_vectors(subset_dir / "xvector.scp")
     X_processed = pipeline.transform(np.stack(embeddings))
