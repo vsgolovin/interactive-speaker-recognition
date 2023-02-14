@@ -13,13 +13,13 @@ DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 NUM_SPEAKERS = 5
 NUM_WORDS = 3
 EPOCHS = 10
-ITERATIONS = 100
+ITERATIONS = 200
 BATCH_SIZE = 32
 
 
 def main():
     dset = TimitXVectors()
-    guesser = Guesser(output_format="logprob").to(DEVICE)
+    guesser = Guesser(emb_dim=512, output_format="logprob").to(DEVICE)
     optimizer = optim.Adam(guesser.parameters())
 
     train_results = np.zeros((2, EPOCHS))
@@ -112,7 +112,7 @@ class TimitXVectors():
         words = np.random.choice(list(self.words.keys()), size=t,
                                  replace=False)
         word_emb = np.stack([
-            self.xvectors["words"].get(f"{target_spkr}_{word}", np.zeros(128))
+            self.xvectors["words"].get(f"{target_spkr}_{word}", np.zeros(512))
             for word in words])
 
         return (torch.FloatTensor(word_emb),
