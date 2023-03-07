@@ -1,5 +1,6 @@
 data/*
 extras/
+output/
 .vscode
 
 # Byte-compiled / optimized / DLL files

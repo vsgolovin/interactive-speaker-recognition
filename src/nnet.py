@@ -4,7 +4,7 @@ from torch.nn import functional as F
 
 
 class Guesser(nn.Module):
-    def __init__(self, emb_dim: int = 128, dropout: float = 0.1,
+    def __init__(self, emb_dim: int = 512, dropout: float = 0.5,
                  output_format: str = "logit"):
         super().__init__()
         hidden_dim = emb_dim * 2
@@ -15,14 +15,13 @@ class Guesser(nn.Module):
             nn.Dropout(p=dropout),
             nn.Linear(2 * hidden_dim, 1)
         )
-        if output_format == "logit":
-            self.f_out = nn.Identity()
-        elif output_format == "logprob":
-            self.f_out = nn.LogSoftmax(dim=-2)
-        else:
-            assert output_format == "proba", \
-                f"Unknown output format {output_format}"
-            self.f_out = nn.Softmax(dim=-2)
+        assert output_format in ["logit", "logprob", "proba"]
+        self.output_format = output_format
+        self.f_out = {
+            "logit": nn.Identity(),
+            "logprob": nn.LogSoftmax(dim=-2),
+            "proba": nn.Softmax(dim=-2)
+        }
 
     def forward(self, X: Tensor, G: Tensor) -> Tensor:
         """
@@ -46,7 +45,7 @@ class Guesser(nn.Module):
 
         # concatenate x_hat with guest voice print
         logits = self.mlp(torch.cat([x_hat.repeat((1, K, 1)), G], dim=2))
-        return self.f_out(logits).squeeze(2)
+        return self.f_out[self.output_format](logits).squeeze(2)
 
 
 class AdditiveAttention(nn.Module):
