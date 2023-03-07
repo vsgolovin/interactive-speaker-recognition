@@ -1,3 +1,4 @@
+from typing import Any, Optional, Tuple
 import torch
 from torch import nn, Tensor
 from torch.nn import functional as F
@@ -64,3 +65,58 @@ class AdditiveAttention(nn.Module):
         alpha = F.softmax(e, dim=-2)
         v_hat = torch.sum(alpha * v, dim=-2, keepdim=True)
         return v_hat
+
+
+class Enquirer(nn.Module):
+    def __init__(self, emb_dim: int = 512, vocab_size: int = 20):
+        super().__init__()
+        hidden_dim = emb_dim * 2
+        self.register_buffer(
+            "start_token",
+            torch.randn(1, emb_dim) / (hidden_dim)**0.5,
+            persistent=True
+        )
+        self.lstm = nn.LSTM(
+            input_size=emb_dim,
+            hidden_size=hidden_dim,
+            bidirectional=True,
+            batch_first=True
+        )
+        self.mlp = nn.Sequential(
+            nn.Linear(hidden_dim + emb_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, vocab_size)
+        )
+        self.softmax = nn.Softmax(dim=-1)
+
+    def reset(self) -> Tuple[Tensor, Tensor]:
+        _, (h0, c0) = self.lstm.forward(self.start_token)
+        return (h0, c0)
+
+    def forward(self, x: Tensor, g_hat: Tensor,
+                hidden: Optional[Tuple[Tensor, Tensor]] = None
+                ) -> Any:
+        """
+        Input tensor shapes:
+            x      ([batch], d)
+            g_hat  ([batch], d)
+            h      (2, [batch], H)
+            c      (2, [batch], H)
+
+        Here `d` is the embedding dimension and `H` is the hidden size.
+        """
+        _, (h, c) = self.lstm(x.unsqueeze(-2), hidden)
+        logits = self.mlp(torch.cat([h[1], x], -1))
+        probs = self.softmax(logits)
+        return probs, (h, c)
+
+
+if __name__ == "__main__":
+    d = 16
+    enq = Enquirer(emb_dim=d, vocab_size=5)
+    h, c = enq.reset()
+    g_hat = torch.randn((d,))
+    for _ in range(3):
+        x = torch.randn((d,))
+        probs, (h, c) = enq(x, g_hat, (h, c))
+        print(probs)
