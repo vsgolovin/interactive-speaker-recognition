@@ -1,4 +1,4 @@
-from typing import Any, Optional, Tuple
+from typing import Optional
 import torch
 from torch import nn, Tensor
 from torch.nn import functional as F
@@ -70,53 +70,60 @@ class AdditiveAttention(nn.Module):
 class Enquirer(nn.Module):
     def __init__(self, emb_dim: int = 512, vocab_size: int = 20):
         super().__init__()
-        hidden_dim = emb_dim * 2
-        self.register_buffer(
-            "start_token",
-            torch.randn(1, emb_dim) / (hidden_dim)**0.5,
-            persistent=True
+        self.start_token = nn.Parameter(
+            torch.randn(emb_dim) / (emb_dim)**0.5,
+            # don't remember where this initialization comes from
+            requires_grad=True
         )
         self.lstm = nn.LSTM(
             input_size=emb_dim,
-            hidden_size=hidden_dim,
-            bidirectional=True,
-            batch_first=True
+            hidden_size=emb_dim,
+            bidirectional=True
         )
         self.mlp = nn.Sequential(
-            nn.Linear(hidden_dim + emb_dim, hidden_dim),
+            nn.Linear(emb_dim * 3, emb_dim * 2),
             nn.ReLU(),
-            nn.Linear(hidden_dim, vocab_size)
+            nn.Linear(emb_dim * 2, vocab_size)
         )
         self.softmax = nn.Softmax(dim=-1)
 
-    def reset(self) -> Tuple[Tensor, Tensor]:
-        _, (h0, c0) = self.lstm.forward(self.start_token)
-        return (h0, c0)
-
-    def forward(self, x: Tensor, g_hat: Tensor,
-                hidden: Optional[Tuple[Tensor, Tensor]] = None
-                ) -> Any:
+    def forward(self, g_hat: Tensor, x: Optional[Tensor] = None) -> Tensor:
         """
         Input tensor shapes:
-            x      ([batch], d)
-            g_hat  ([batch], d)
-            h      (2, [batch], H)
-            c      (2, [batch], H)
-
-        Here `d` is the embedding dimension and `H` is the hidden size.
+            g_hat  (batch, d)
+            x      (seq, batch, d)
         """
-        _, (h, c) = self.lstm(x.unsqueeze(-2), hidden)
-        logits = self.mlp(torch.cat([h[1], x], -1))
-        probs = self.softmax(logits)
-        return probs, (h, c)
+        bs = g_hat.size(0)
+        start = self.start_token.repeat((1, bs, 1))
+        if x is None:
+            inp = start
+        else:
+            inp = torch.cat([start, x], dim=0)
+        last_output = self.lstm(inp)[0][-1]  # [batch, d * 2]
+        logits = self.mlp(torch.cat([last_output, g_hat], 1))
+        return self.softmax(logits)
 
 
 if __name__ == "__main__":
-    d = 16
-    enq = Enquirer(emb_dim=d, vocab_size=5)
-    h, c = enq.reset()
-    g_hat = torch.randn((d,))
-    for _ in range(3):
-        x = torch.randn((d,))
-        probs, (h, c) = enq(x, g_hat, (h, c))
-        print(probs)
+    d = 8
+    s = 5
+    bs = 2
+    enq = Enquirer(emb_dim=d, vocab_size=s)
+    g_hat = torch.randn(bs, d)
+    vocab = torch.randn((s, d))
+    print("Vocabulary:", vocab)
+
+    x = None
+    for i in range(3):
+        print(f"\nSTEP {i}")
+        print("X-vectors:", x)
+        probs = enq(g_hat, x)
+        print("Enquirer output:", probs)
+
+        inds = torch.argmax(probs, 1)
+        print("Selecting words:", inds)
+        new_words = (vocab[inds]).unsqueeze(0)
+        if x is None:
+            x = new_words
+        else:
+            x = torch.cat([x, new_words])

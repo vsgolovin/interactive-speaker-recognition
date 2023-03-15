@@ -1,3 +1,4 @@
+from typing import Union
 import pytest
 import numpy as np
 import torch
@@ -24,3 +25,15 @@ def test_additive_attention(b: int, t: int, d: int):
     att = nnet.AdditiveAttention(d, d * 2)
     v_hat = att(q, k, v)
     assert v_hat.size() == torch.Size((b, 1, d))
+
+
+@pytest.mark.parametrize("L", (0, 1, 3))
+@pytest.mark.parametrize("b,d,v", [(1, 16, 3), (16, 128, 20)])
+def test_enquirer(b: int, d: int, v: int, L: Union[int, None]):
+    enq = nnet.Enquirer(emb_dim=d, vocab_size=v)
+    g_hat = torch.randn((b, d))
+    x = torch.randn((L, b, d)) if L > 0 else None
+    probs = enq(g_hat, x)
+    assert probs.shape == torch.Size([b, v]) and \
+        torch.allclose(probs.sum(1), torch.ones(b)) and \
+        torch.all((probs > 0) & (probs < 1))
