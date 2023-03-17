@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Tuple, Union
 import torch
 from torch import nn, Tensor
 from torch.nn import functional as F
@@ -68,7 +68,8 @@ class AdditiveAttention(nn.Module):
 
 
 class Enquirer(nn.Module):
-    def __init__(self, emb_dim: int = 512, vocab_size: int = 20):
+    def __init__(self, emb_dim: int = 512, n_outputs: int = 20):
+        "Use n_outputs=1 for value function / critic"
         super().__init__()
         self.start_token = nn.Parameter(
             torch.randn(emb_dim) / (emb_dim)**0.5,
@@ -83,32 +84,43 @@ class Enquirer(nn.Module):
         self.mlp = nn.Sequential(
             nn.Linear(emb_dim * 3, emb_dim * 2),
             nn.ReLU(),
-            nn.Linear(emb_dim * 2, vocab_size)
+            nn.Linear(emb_dim * 2, n_outputs),
+            nn.Softmax(dim=-1) if n_outputs > 1 else nn.Identity()
         )
-        self.softmax = nn.Softmax(dim=-1)
 
-    def forward(self, g_hat: Tensor, x: Optional[Tensor] = None) -> Tensor:
+    def forward(self, state: Union[Tuple, Tensor]) -> Tensor:
         """
-        Input tensor shapes:
-            g_hat  (batch, d)
-            x      (seq, batch, d)
+        `state` is a tuple consisting of
+            X : Tensor | None
+                Word embeddings, shape (seq, batch, d)
+            G_hat : Tensor
+                Guest voice prints, shape (batch, d)
+
+        `X = None` can be omitted, i.e., call `.forward(G_hat)`
         """
-        bs = g_hat.size(0)
+        # unpack input
+        if isinstance(state, Tensor):
+            X = None
+            G_hat = state
+        else:
+            assert isinstance(state, tuple) and len(state) == 2
+            X, G_hat = state
+
+        bs = G_hat.size(0)
         start = self.start_token.repeat((1, bs, 1))
-        if x is None:
+        if X is None:
             inp = start
         else:
-            inp = torch.cat([start, x], dim=0)
+            inp = torch.cat([start, X], dim=0)
         last_output = self.lstm(inp)[0][-1]  # [batch, d * 2]
-        logits = self.mlp(torch.cat([last_output, g_hat], 1))
-        return self.softmax(logits)
+        return self.mlp(torch.cat([last_output, G_hat], 1))
 
 
 if __name__ == "__main__":
     d = 8
     s = 5
     bs = 2
-    enq = Enquirer(emb_dim=d, vocab_size=s)
+    enq = Enquirer(emb_dim=d, n_outputs=s)
     g_hat = torch.randn(bs, d)
     vocab = torch.randn((s, d))
     print("Vocabulary:", vocab)
