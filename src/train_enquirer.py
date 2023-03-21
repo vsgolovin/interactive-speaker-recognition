@@ -1,11 +1,16 @@
+"""
+Does not actually train enquirer (yet).
+"""
+
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, Iterable
 import numpy as np
 import torch
 from torch import Tensor
 from common import PathLike
+from nnet import Guesser
 import timit
-from envtools import pack_states, append_word_vectors
+from envtools import pack_states, unpack_states, append_word_vectors
 
 
 NUM_WORDS = 3
@@ -16,18 +21,17 @@ def main():
     b = 10
 
     dset = XVectorDataset()
-    G, target_ids, targets = dset.sample_games(b, "train", NUM_SPEAKERS)
-    print(G.shape)
-    print(target_ids)
-    print(targets)
-    s = pack_states(G, None, NUM_WORDS)
+    guesser = Guesser()
+    env = IsrEnvironment(dset, guesser)
+    s = env.reset("train", batch_size=b)
+    print(f"Shape of state tensor: {s.shape}")
 
     for i in range(NUM_WORDS):
         word_inds = torch.randint(0, len(dset.words), (b,))
-        x = dset.get_word_embeddings(target_ids, word_inds)
-        s = append_word_vectors(s, x, NUM_SPEAKERS, i)
-        print(s[0, 0, :10])
-        print(s.shape)
+        s, r = env.step(word_inds)
+        print(f"\nStep {i + 1} / {NUM_WORDS}")
+        print(r)
+        print()
 
 
 class XVectorDataset:
@@ -109,12 +113,63 @@ class XVectorDataset:
 
         return voice_prints, target_ids, targets
 
-    def get_word_embeddings(self, speaker_ids: np.ndarray, word_inds: Tensor
-                            ) -> Tensor:
+    def get_word_embeddings(self, speaker_ids: np.ndarray,
+                            word_inds: Iterable[int]) -> Tensor:
         return torch.stack(
             [self.word_vectors[spkr][wrd]
              for spkr, wrd in zip(speaker_ids, word_inds)],
             dim=0)
+
+
+class IsrEnvironment:
+    def __init__(self, dataset: XVectorDataset, guesser: Guesser):
+        self.dset = dataset
+        self.guesser = guesser.eval()
+
+        # environment settings, updated by `reset()`
+        self.subset = None
+        self.batch_size = None
+        self.num_speakers = None
+        self.num_words = None
+
+        # environment state, updated by `reset()` and `step()`
+        self.word_index = None
+        self.speaker_ids = None
+        self.targets = None
+        self.states = None
+
+    def reset(self, subset: str = "train", batch_size: int = 32,
+              num_speakers: int = 5, num_words: int = 3):
+        "Returns state tensor"
+        voice_prints, speaker_ids, targets = self.dset.sample_games(
+            batch_size, subset, num_speakers)
+        self.subset = subset
+        self.batch_size = batch_size
+        self.num_speakers = num_speakers
+        self.num_words = num_words
+        self.word_index = 0
+        self.speaker_ids = speaker_ids
+        self.targets = targets
+        self.states = pack_states(voice_prints, None, num_words)
+        return self.states
+
+    def step(self, word_inds: Iterable[int]) -> Tuple[Tensor, np.ndarray]:
+        "Returns state and reward"
+        x = self.dset.get_word_embeddings(self.speaker_ids, word_inds)
+        append_word_vectors(self.states, x, self.num_speakers, self.word_index)
+        self.word_index += 1
+
+        # intermediate steps
+        if self.word_index < self.num_words:
+            return self.states, torch.zeros((self.batch_size,))
+
+        # final step => evaluate guesser
+        g, x = unpack_states(self.states)
+        with torch.no_grad():
+            output = self.guesser(g, x)
+            predictions = torch.argmax(output, 1)
+            rewards = (predictions == self.targets).to(torch.float32)
+            return self.states, rewards
 
 
 if __name__ == "__main__":

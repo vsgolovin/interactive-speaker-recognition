@@ -24,14 +24,14 @@ class Guesser(nn.Module):
             "proba": nn.Softmax(dim=-2)
         }
 
-    def forward(self, X: Tensor, G: Tensor) -> Tensor:
+    def forward(self, G: Tensor, X: Tensor) -> Tensor:
         """
         Parameters
         ----------
-        X : Tensor
-            word X-Vectors, shape (batch, T, d)
         G : Tensor
             speaker voice prints, shape (batch, K, d)
+        X : Tensor
+            word X-Vectors, shape (batch, T, d)
 
         Notation same as in the paper: `T` is the number of word utterances
         used for classification, `K` is the number of speakers in the current
