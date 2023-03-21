@@ -29,9 +29,7 @@ class TimitCorpus:
 
     def _save_word_ids(self, word_dir: Path):
         txtfile = word_dir / "WORDS.TXT"
-        with open(txtfile, "w") as fout:
-            for word, word_id in self.words.items():
-                fout.write(f"{word} {word_id}\n")
+        write_words_txt(self.words, txtfile)
 
     def _get_speaker_directory(self, speaker_id: str,
                                info: Optional[pd.Series] = None) -> Path:
@@ -128,11 +126,7 @@ class TimitCorpus:
         spk2utt = open(words_out_dir / "spk2utt", "w")
 
         if not self.words:
-            words = {}
-            with open(words_dir / "WORDS.TXT", "r") as fin:
-                for line in fin:
-                    wid, word = line.rstrip().split(" ")
-                    words[wid] = word
+            words = read_words_txt(words_dir / "WORDS.TXT")
         else:
             words = self.words
 
@@ -244,6 +238,21 @@ def read_wrd_file(file: PathLike) -> Sequence[Tuple[int, int, str]]:
                 start, end, word = lst
                 timestamps.append((int(start), int(end), word))
     return timestamps
+
+
+def write_words_txt(words: dict, txtfile: Path):
+    with open(txtfile, "w") as fout:
+        for word, word_id in words.items():
+            fout.write(f"{word} {word_id}\n")
+
+
+def read_words_txt(txtfile: Path) -> dict:
+    words = {}
+    with open(txtfile, "r") as fin:
+        for line in fin:
+            word, wid = line.rstrip().split(" ")
+            words[wid] = word
+    return words
 
 
 if __name__ == "__main__":
