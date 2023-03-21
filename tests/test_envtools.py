@@ -55,3 +55,25 @@ def test_pack_unpack(b: int, K: int, T: int, t: int, d: int):
     g_out, x_out = envtools.unpack_states(packed)
     assert (torch.allclose(g, g_out)
             and ((t == 0 and x_out is None) or torch.allclose(x, x_out)))
+
+
+def test_append():
+    K = 2
+    T = 3
+    d = 3
+    g = torch.zeros((1, K, d))
+    state = envtools.pack_states(g, None, num_words=3)
+    for t in range(T):
+        x = torch.ones((1, d)) * (t + 1)
+        state = envtools.append_word_vectors(state, x, K, t)
+    ans = torch.tensor([
+        [
+            [K, T, T],
+            [0., 0., 0.],
+            [0., 0., 0.],
+            [1., 1., 1.],
+            [2., 2., 2.],
+            [3., 3., 3.],
+        ]
+    ])
+    assert torch.allclose(ans, state)

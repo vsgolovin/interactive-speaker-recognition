@@ -45,3 +45,12 @@ def unpack_states(packed: Tensor) -> Tuple[Tensor, Tensor]:
     if num_req_words == 0:
         x = None
     return g, x
+
+
+def append_word_vectors(packed: Tensor, x: Tensor, num_speakers: int,
+                        word_index: int) -> Tensor:
+    assert torch.all(packed[:, 0, 2] == word_index)
+    packed[:, 0, 2] = word_index + 1
+    j = 1 + num_speakers + word_index
+    packed[:, j, :] = x
+    return packed
