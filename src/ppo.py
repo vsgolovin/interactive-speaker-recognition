@@ -1,4 +1,4 @@
-from typing import Tuple, Union
+from typing import Optional, Tuple, Union
 from pathlib import Path
 import numpy as np
 import torch
@@ -8,7 +8,7 @@ from torch.nn import functional as F
 
 
 LAMBDA = 0.95
-GAMMA = 0.99
+GAMMA = 0.9
 BATCH_SIZE = 64
 ACTOR_LR = 3e-4
 CRITIC_LR = 3e-4
@@ -17,71 +17,67 @@ ENTROPY_COEF = None
 DEVICE = torch.device("cuda:0")
 
 
-class Trajectory:
-    def __init__(self):
+class Buffer:
+    def __init__(self, num_words: int, lambda_gae: float = LAMBDA,
+                 gamma: float = GAMMA, batch_size: Optional[int] = None):
+        self.T = num_words
+        self.lam = lambda_gae
+        self.gamma = gamma
         self.states = []
         self.actions = []
         self.probs = []
         self.rewards = []
         self.values = []
+        self.batch_size = batch_size
 
-    def __len__(self):
-        return len(self.probs)
+    def append(self, states: Tensor, actions: Tensor, probs: Tensor,
+               rewards: Tensor, values: Tensor):
+        if self.batch_size is None:
+            self.batch_size = states.size(0)
+        for t in (states, actions, probs, rewards, values):
+            assert t.size(0) == self.batch_size
+        self.states.append(states.cpu())
+        self.actions.append(actions.cpu())
+        self.probs.append(probs.cpu())
+        self.rewards.append(rewards.cpu())
+        self.values.append(values.cpu())
 
-    def append(self, state: np.ndarray, action: int, proba: float,
-               reward: float, value: float):
-        self.states.append(state)
-        self.actions.append(action)
-        self.probs.append(proba)
-        self.rewards.append(reward)
-        self.values.append(value)
+    def construct_tensors(self):
+        # list -> tensor
+        assert len(self.states) % self.T == 0
+        s, a, p, r, v = [
+            torch.cat(lst, dim=0)
+            for lst in (self.states, self.actions, self.probs, self.rewards,
+                        self.values)
+        ]
 
-    def compute_lambda_returns_and_gae(self, lam: float, gamma: float
-                                       ) -> Tuple[np.ndarray, np.ndarray]:
-        returns = np.array(self.rewards)
-        for i in reversed(range(1, len(self))):
-            returns[i - 1] += gamma * (self.values[i] * (1 - lam)
-                                       + returns[i] * lam)
-        gae = returns - np.asarray(self.values)
-        return returns, gae
+        # compute lambda-returns and advantage
+        start = self.batch_size * (self.T - 1)
+        end = start + self.batch_size  # == self.T * self.batch_size
+        n_games = s.size(0) // end
+        inds = torch.cat(
+            [torch.arange(start, start + self.batch_size) + end * i
+             for i in range(n_games)],
+            dim=0
+        )  # indices of terminal states
+        g = r  # transform reward tensor into lambda-returns
+        for _ in range(self.T - 1):
+            g[inds - self.batch_size] += \
+                self.gamma * (v[inds] * (1 - self.lam) + g[inds] * self.lam)
+            inds -= self.batch_size
+        adv = g - v
 
+        return s, a, p, g, adv
 
-class Buffer:
-    def __init__(self, lam: float = LAMBDA, gamma: float = GAMMA):
-        self.states = []
-        self.actions = []
-        self.probs = []
-        self.returns = []
-        self.gae = []
-        self.lam = lam
-        self.gamma = gamma
-
-    def __len__(self):
-        return len(self.actions)
-
-    def append(self, traj: Trajectory):
-        self.states += traj.states
-        self.actions += traj.actions
-        self.probs += traj.probs
-        returns, gae = traj.compute_lambda_returns_and_gae(self.lam,
-                                                           self.gamma)
-        self.returns += list(returns)
-        self.gae += list(gae)
-
-    def get(self, bs: int = BATCH_SIZE, bs_min: int = 8):
-        states = np.array(self.states, dtype=np.float32)
-        actions = np.array(self.actions, dtype=np.int64)
-        probs = np.array(self.probs, dtype=np.float32)
-        returns = np.array(self.returns, dtype=np.float32)
-        gae = np.array(self.gae, dtype=np.float32)
-
-        N = len(states)
+    def get(self, batch_size: int, batch_size_min: int = 8):
+        s, a, p, g, adv = self.construct_tensors()
+        N = s.size(0)
         inds = np.random.permutation(N)
         i = 0
-        while i < N - bs_min:
-            ix = inds[i:i + bs]
-            yield states[ix], actions[ix], probs[ix], returns[ix], gae[ix]
-            i += bs
+        while i < N - batch_size_min:
+            ix = inds[i:i + batch_size]
+            yield s[ix], a[ix], p[ix], g[ix], adv[ix]
+            i += batch_size
 
 
 class Actor(nn.Module):
