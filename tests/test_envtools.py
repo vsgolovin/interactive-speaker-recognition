@@ -11,7 +11,7 @@ def test_packing():
             [1.2, 0, -0.5]
         ],
         [
-            [-3., -2, -1.,],
+            [-3., -2, -1.],
             [0.5, 0.5, 0.0],
             [3., 2., 1.]
         ]
@@ -36,7 +36,7 @@ def test_packing():
         ],
         [
             [3., 2., 1.],
-            [-3., -2, -1.,],
+            [-3., -2, -1.],
             [0.5, 0.5, 0.0],
             [3., 2., 1.],
             [2., 0., 2],
@@ -62,10 +62,10 @@ def test_append():
     T = 3
     d = 3
     g = torch.zeros((1, K, d))
-    state = envtools.pack_states(g, None, num_words=3)
+    state = envtools.pack_states(g, None, num_words=T)
     for t in range(T):
         x = torch.ones((1, d)) * (t + 1)
-        state = envtools.append_word_vectors(state, x, K, t)
+        envtools.append_word_vectors(state, x, K, t)
     ans = torch.tensor([
         [
             [K, T, T],

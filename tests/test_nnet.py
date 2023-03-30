@@ -10,7 +10,7 @@ def test_guesser(b: int, t: int, k: int, d: int):
     X = torch.randn((b, t, d))
     G = torch.randn((b, k, d))
     guesser = nnet.Guesser(emb_dim=d, output_format="proba")
-    probs = guesser(X, G)
+    probs = guesser(G, X)
     prob_sums = probs.detach().sum(1).numpy()
     assert probs.size() == torch.Size((b, k)) \
         and np.allclose(prob_sums, np.ones(b))
@@ -32,8 +32,8 @@ def test_additive_attention(b: int, t: int, d: int):
 def test_enquirer(b: int, d: int, v: int, L: Union[int, None]):
     enq = nnet.Enquirer(emb_dim=d, n_outputs=v)
     g_hat = torch.randn((b, d))
-    x = torch.randn((L, b, d)) if L > 0 else None
-    probs = enq((x, g_hat))
+    x = torch.randn((b, L, d)) if L > 0 else None
+    probs = enq(g_hat, x)
     assert probs.shape == torch.Size([b, v]) and \
         torch.allclose(probs.sum(1), torch.ones(b)) and \
         torch.all((probs > 0) & (probs < 1))

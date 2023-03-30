@@ -1,4 +1,4 @@
-from typing import Tuple, Union
+from typing import Optional
 import torch
 from torch import nn, Tensor
 from torch.nn import functional as F
@@ -79,6 +79,7 @@ class Enquirer(nn.Module):
         self.lstm = nn.LSTM(
             input_size=emb_dim,
             hidden_size=emb_dim,
+            batch_first=True,
             bidirectional=True
         )
         self.mlp = nn.Sequential(
@@ -88,31 +89,14 @@ class Enquirer(nn.Module):
             nn.Softmax(dim=-1) if n_outputs > 1 else nn.Identity()
         )
 
-    def forward(self, state: Union[Tuple, Tensor]) -> Tensor:
-        """
-        `state` is a tuple consisting of
-            X : Tensor | None
-                Word embeddings, shape (seq, batch, d)
-            G_hat : Tensor
-                Guest voice prints, shape (batch, d)
-
-        `X = None` can be omitted, i.e., call `.forward(G_hat)`
-        """
-        # unpack input
-        if isinstance(state, Tensor):
-            X = None
-            G_hat = state
-        else:
-            assert isinstance(state, tuple) and len(state) == 2
-            X, G_hat = state
-
+    def forward(self, G_hat: Tensor, X: Optional[Tensor] = None) -> Tensor:
         bs = G_hat.size(0)
-        start = self.start_token.repeat((1, bs, 1))
+        start = self.start_token.repeat((bs, 1, 1))
         if X is None:
             inp = start
         else:
-            inp = torch.cat([start, X], dim=0)
-        last_output = self.lstm(inp)[0][-1]  # [batch, d * 2]
+            inp = torch.cat([start, X], dim=1)
+        last_output = self.lstm(inp)[0][:, -1, :]  # [batch, d * 2]
         return self.mlp(torch.cat([last_output, G_hat], 1))
 
 
@@ -134,8 +118,8 @@ if __name__ == "__main__":
 
         inds = torch.argmax(probs, 1)
         print("Selecting words:", inds)
-        new_words = (vocab[inds]).unsqueeze(0)
+        new_words = (vocab[inds]).unsqueeze(1)
         if x is None:
             x = new_words
         else:
-            x = torch.cat([x, new_words])
+            x = torch.cat([x, new_words], 1)
