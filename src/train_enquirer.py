@@ -16,8 +16,8 @@ NUM_SPEAKERS = 5
 NUM_ENVS = 33
 BATCHES_PER_UPDATE = 10
 EPISODES_PER_UPDATE = NUM_ENVS * BATCHES_PER_UPDATE
-NUM_EPISODES = EPISODES_PER_UPDATE * 300
-BATCH_SIZE = 100
+NUM_EPISODES = EPISODES_PER_UPDATE * 600
+BATCH_SIZE = 500
 EPOCHS_PER_UPDATE = 2
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -31,8 +31,9 @@ def main():
     ppo = PPO(512, len(dset.words), device=DEVICE)
     buffer = Buffer(num_words=NUM_WORDS)
 
-    avg_reward = evaluate(ppo, env, subset="test")
-    print(f"Average reward before training: {avg_reward}")
+    for subset in ("train", "val", "test"):
+        avg_reward = evaluate(ppo, env, subset=subset)
+        print(f"Average reward before training: {avg_reward}")
 
     episodes = 0
     ppo.train()
@@ -53,8 +54,9 @@ def main():
 
             buffer.empty()
 
-    avg_reward = evaluate(ppo, env, subset="test")
-    print(f"Average reward after training: {avg_reward}")
+    for subset in ("train", "val", "test"):
+        avg_reward = evaluate(ppo, env, subset=subset)
+        print(f"Average reward before training: {avg_reward}")
 
     # save actor and critic weights
     ppo.save("output")

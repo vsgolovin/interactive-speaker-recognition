@@ -12,9 +12,10 @@ from nnet import Enquirer
 
 LAMBDA = 0.95
 GAMMA = 0.9
-ACTOR_LR = 3e-4
-CRITIC_LR = 3e-4
-CLIP = 0.2
+ACTOR_LR = 5e-3
+CRITIC_LR = 5e-3
+GRAD_CLIP = 1.0
+PPO_CLIP = 0.2
 ENTROPY_COEF = 0.01
 
 
@@ -40,11 +41,11 @@ class Buffer:
             self.batch_size = states.size(0)
         for t in (states, actions, probs, rewards, values):
             assert t.size(0) == self.batch_size
-        self.states.append(states.cpu())
-        self.actions.append(actions.cpu())
-        self.probs.append(probs.cpu())
-        self.rewards.append(rewards.cpu())
-        self.values.append(values.cpu())
+        self.states.append(states.clone().cpu())
+        self.actions.append(actions.clone().cpu())
+        self.probs.append(probs.clone().cpu())
+        self.rewards.append(rewards.clone().cpu())
+        self.values.append(values.clone().cpu())
 
     def construct_tensors(self):
         # list -> tensor
@@ -174,12 +175,15 @@ class PPO:
                 frac = p.ravel() / p0
                 actor_loss = -torch.min(
                     frac * adv,
-                    torch.clamp(frac, 1 - CLIP, 1 + CLIP) * adv
+                    torch.clamp(frac, 1 - PPO_CLIP, 1 + PPO_CLIP) * adv
                 ).mean()
                 if ENTROPY_COEF:
                     actor_loss -= ENTROPY_COEF * entropy.mean()
                 self.actor_optim.zero_grad()
                 actor_loss.backward()
+                if GRAD_CLIP:
+                    nn.utils.clip_grad_norm_(
+                        self.actor.parameters(), GRAD_CLIP)
                 self.actor_optim.step()
 
                 # update critic
@@ -187,6 +191,9 @@ class PPO:
                 critic_loss = F.mse_loss(v_pred, v_target)
                 self.critic_optim.zero_grad()
                 critic_loss.backward()
+                if GRAD_CLIP:
+                    nn.utils.clip_grad_norm_(
+                        self.critic.parameters(), GRAD_CLIP)
                 self.critic_optim.step()
 
                 actor_losses.append(actor_loss.item() * s.size(0))
