@@ -12,11 +12,10 @@ from nnet import Enquirer
 
 LAMBDA = 0.95
 GAMMA = 0.9
-BATCH_SIZE = 64
 ACTOR_LR = 3e-4
 CRITIC_LR = 3e-4
 CLIP = 0.2
-ENTROPY_COEF = None
+ENTROPY_COEF = 0.01
 
 
 class Buffer:
