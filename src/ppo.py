@@ -1,10 +1,13 @@
-from typing import Optional, Tuple, Union
+from typing import Tuple, Union
 from pathlib import Path
 import numpy as np
 import torch
 from torch import nn, Tensor
 from torch.optim import Adam
 from torch.nn import functional as F
+from common import PathLike
+from envtools import unpack_states
+from nnet import Enquirer
 
 
 LAMBDA = 0.95
@@ -14,12 +17,11 @@ ACTOR_LR = 3e-4
 CRITIC_LR = 3e-4
 CLIP = 0.2
 ENTROPY_COEF = None
-DEVICE = torch.device("cuda:0")
 
 
 class Buffer:
     def __init__(self, num_words: int, lambda_gae: float = LAMBDA,
-                 gamma: float = GAMMA, batch_size: Optional[int] = None):
+                 gamma: float = GAMMA):
         self.T = num_words
         self.lam = lambda_gae
         self.gamma = gamma
@@ -28,7 +30,10 @@ class Buffer:
         self.probs = []
         self.rewards = []
         self.values = []
-        self.batch_size = batch_size
+        self.batch_size = None
+
+    def __len__(self) -> int:
+        return sum(s.size(0) for s in self.states)
 
     def append(self, states: Tensor, actions: Tensor, probs: Tensor,
                rewards: Tensor, values: Tensor):
@@ -79,24 +84,33 @@ class Buffer:
             yield s[ix], a[ix], p[ix], g[ix], adv[ix]
             i += batch_size
 
+    def empty(self):
+        self.states = []
+        self.actions = []
+        self.probs = []
+        self.rewards = []
+        self.values = []
+
 
 class Actor(nn.Module):
     def __init__(self, input_size: int, num_actions: int):
         super().__init__()
         self.num_actions = num_actions
-        self.model = get_ppo_fc_model(input_size, num_actions)
+        self.model = Enquirer(emb_dim=input_size, n_outputs=num_actions)
 
     def forward(self, x: Tensor) -> Tensor:
         return self.model(x)
 
     @torch.no_grad()
-    def act(self, states: Tensor) -> Tuple[np.ndarray, np.ndarray]:
+    def act(self, states: Tensor) -> Tuple[Tensor, Tensor]:
         "Return actions and their probabilities according to current policy"
-        logits = self.model(states)
+        g, x = unpack_states(states)
+        g_hat = torch.mean(g, dim=1)
+        logits = self.model(g_hat, x)
         probs_full = torch.softmax(logits, 1)
         actions = torch.multinomial(probs_full, 1)
         probs = probs_full.gather(1, actions)
-        return actions.cpu().numpy().ravel(), probs.cpu().numpy().ravel()
+        return actions, probs
 
     def get_probs_entropy(self, states: Tensor, actions: Tensor
                           ) -> Tuple[Tensor, Tensor]:
@@ -104,44 +118,56 @@ class Actor(nn.Module):
         Return probabilities of actions acc. to current policy
         and entropy of every action distribution
         """
-        probs_full = torch.softmax(self.model(states), 1)
+        g, x = unpack_states(states)
+        g_hat = torch.mean(g, dim=1)
+        probs_full = torch.softmax(self.model(g_hat, x), 1)
         entropy = torch.sum(probs_full * torch.log(probs_full), 1)
         probs = probs_full.gather(1, actions.view(-1, 1))
         return probs, entropy
-
-    def save(self, path: Path):
-        torch.save(self.model.state_dict(), path)
 
 
 class Critic(nn.Module):
     def __init__(self, input_size: int):
         super().__init__()
-        self.model = get_ppo_fc_model(input_size, 1)
+        self.model = Enquirer(emb_dim=input_size, n_outputs=1)
 
-    def forward(self, x: Tensor) -> Tensor:
-        return self.model(x)
-
-    def save(self, path: Path):
-        torch.save(self.model.state_dict(), path)
+    def forward(self, states: Tensor) -> Tensor:
+        g, x = unpack_states(states)
+        g_hat = torch.mean(g, dim=1)
+        return self.model(g_hat, x)
 
 
 class PPO:
     "Proximal Policy Optimization with clipping"
-    def __init__(self, input_size: int, num_actions: int):
-        self.actor = Actor(input_size, num_actions).to(DEVICE)
-        self.critic = Critic(input_size).to(DEVICE)
+    def __init__(self, input_size: int, num_actions: int,
+                 device: Union[torch.device, str]):
+        if isinstance(device, str):
+            device = torch.device(device)
+        self.device = device
+        self.actor = Actor(input_size, num_actions).to(self.device)
+        self.critic = Critic(input_size).to(self.device)
         self.actor_optim = Adam(self.actor.parameters(), lr=ACTOR_LR)
         self.critic_optim = Adam(self.critic.parameters(), lr=CRITIC_LR)
 
-    def update(self, buffer: Buffer, bs: int = BATCH_SIZE, epochs: int = 3):
+    def train(self):
+        self.actor.train()
+        self.critic.train()
+        return self
+
+    def eval(self):
+        self.actor.eval()
+        self.critic.eval()
+        return self
+
+    def update(self, buffer: Buffer, bs: int, epochs: int
+               ) -> Tuple[float, float]:
         actor_losses = []
         critic_losses = []
 
         for _ in range(epochs):
             # iterate over whole buffer
             for batch in buffer.get(bs):
-                s, a, p0, v_target, adv = map(
-                    lambda x: torch.tensor(x, device=DEVICE), batch)
+                s, a, p0, v_target, adv = [t.to(self.device) for t in batch]
                 adv = (adv - adv.mean()) / (adv.std() + 1e-8)
 
                 # update actor
@@ -164,29 +190,22 @@ class PPO:
                 critic_loss.backward()
                 self.critic_optim.step()
 
-                actor_losses.append(actor_loss.item())
-                critic_losses.append(critic_loss.item())
+                actor_losses.append(actor_loss.item() * s.size(0))
+                critic_losses.append(critic_loss.item() * s.size(0))
 
-        return np.array(actor_losses), np.array(critic_losses)
+        n_samples = len(buffer)
+        actor_loss = np.sum(actor_losses) / n_samples
+        critic_loss = np.sum(critic_losses) / n_samples
+        return actor_loss, critic_loss
 
     @torch.no_grad()
-    def step(self, states: np.ndarray):
-        states = torch.tensor(states, device=DEVICE)
+    def step(self, states: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
+        states = states.to(self.device)
         actions, probs = self.actor.act(states)
-        values = self.critic(states).squeeze(-1).cpu().numpy()
+        values = self.critic(states).squeeze(-1)
         return actions, probs, values
 
-    def save(self, path: Union[str, Path]):
-        path = Path(path)
-        self.actor.save(path / "actor.pth")
-        self.critic.save(path / "critic.pth")
-
-
-def get_ppo_fc_model(input_size: int, output_size: int):
-    return nn.Sequential(
-        nn.Linear(input_size, 64),
-        nn.Tanh(),
-        nn.Linear(64, 64),
-        nn.Tanh(),
-        nn.Linear(64, output_size)
-    )
+    def save(self, output_dir: PathLike):
+        path = Path(output_dir)
+        torch.save(self.actor.state_dict(), path / "actor.pth")
+        torch.save(self.critic.state_dict(), path / "critic.pth")
