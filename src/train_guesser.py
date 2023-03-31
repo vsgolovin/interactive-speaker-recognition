@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torch import nn, optim
+import tqdm
 from nnet import Guesser
 import timit
 
@@ -21,7 +22,7 @@ import timit
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 NUM_SPEAKERS = 5
 NUM_WORDS = 3
-EPOCHS = 40
+EPOCHS = 30
 ITERATIONS = 200  # per epoch
 BATCH_SIZE = 50
 TEST_GAMES = 20000
@@ -35,48 +36,65 @@ def main():
         output_dir.mkdir()
     else:
         assert output_dir.is_dir()
+    save_to = output_dir / "guesser.pth"
 
     # initialize dataset wrapper, model and optimizer
     dset = timit.TimitXVectors(seed=SPLIT_SEED)
     guesser = Guesser(emb_dim=512, output_format="logit").to(DEVICE)
-    optimizer = optim.Adam(guesser.parameters())
+    optimizer = optim.Adam(guesser.parameters(), weight_decay=5e-4)
 
     # train the model
     train_results = np.zeros((2, EPOCHS))
     val_results = np.zeros_like(train_results)
-    for epoch in range(EPOCHS):
-        train_results[:, epoch] = run_n_iterations(
-            dset, guesser, optimizer, "train", BATCH_SIZE, ITERATIONS)
-        print(f"[train] loss = {train_results[0, epoch]}, " +
-              f"accuracy = {train_results[1, epoch]}")
-        val_results[:, epoch] = run_n_iterations(
-            dset, guesser, optimizer, "val", BATCH_SIZE, ITERATIONS // 2)
-        print(f"[validation] loss = {val_results[0, epoch]}, " +
-              f"accuracy = {val_results[1, epoch]}")
+    best_epoch = 0
+    best_acc = 0.0
+    with tqdm.tqdm(total=EPOCHS) as pbar:
+        for epoch in range(EPOCHS):
+
+            # train and validate
+            train_results[:, epoch] = run_n_iterations(
+                dset, guesser, optimizer, "train", BATCH_SIZE, ITERATIONS)
+            val_loss, val_acc = run_n_iterations(
+                dset, guesser, optimizer, "val", BATCH_SIZE, ITERATIONS)
+            val_results[:, epoch] = [val_loss, val_acc]
+
+            # save model if validation accuracy is highest
+            if val_acc > best_acc:
+                best_epoch = epoch
+                best_acc = val_acc
+                torch.save(guesser.state_dict(), save_to)
+
+            # update progress bar
+            pbar.update(1)
+            pbar.set_postfix({
+                "train_acc": train_results[1, epoch],
+                "val_acc": val_results[1, epoch]
+            })
+
+    # load best model
+    print(f"Loading model weights from epoch {best_epoch}.")
+    guesser.load_state_dict(torch.load(save_to))
 
     # check model performance on test set
     test_loss, test_acc = run_n_iterations(
         dset, guesser, optimizer, "test", BATCH_SIZE, TEST_GAMES // BATCH_SIZE)
     print(f"[test] loss = {test_loss}, accuracy = {test_acc}")
 
-    # export model weights
-    torch.save(guesser.state_dict(), output_dir / "guesser.pth")
-
     # plot results
     plt.figure()
     epochs = np.arange(1, EPOCHS + 1)
     plt.plot(epochs, train_results[0], "b.-", label="train")
     plt.plot(epochs, val_results[0], "r.-", label="validation")
-    plt.plot([epochs[-1]], [test_loss], "k.", label="test")
+    plt.plot([best_epoch + 1], [test_loss], "k.", label="test")
     plt.legend(loc="center right")
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
     plt.twinx()
     plt.plot(epochs, train_results[1], "b.:", label="train")
     plt.plot(epochs, val_results[1], "r.:", label="validation")
-    plt.plot([epochs[-1]], [test_acc], "k.", label="test")
+    plt.plot([best_epoch + 1], [test_acc], "k.", label="test")
     plt.ylabel("Accuracy")
-    plt.savefig(output_dir / "guesser_training.png", dpi=150)
+    plt.savefig(output_dir / "guesser_training.png", dpi=75)
 
 
 def forward_step(guesser: Guesser, batch: Tuple):
