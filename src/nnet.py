@@ -72,8 +72,8 @@ class Enquirer(nn.Module):
         "Use n_outputs=1 for value function / critic"
         super().__init__()
         self.start_token = nn.Parameter(
-            torch.randn(emb_dim) / (emb_dim)**0.5,
-            # don't remember where this initialization comes from
+            torch.rand(emb_dim) / (emb_dim)**0.5,
+            # same as LSTM weight initialization
             requires_grad=True
         )
         self.lstm = nn.LSTM(
