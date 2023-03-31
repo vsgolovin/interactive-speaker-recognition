@@ -1,8 +1,12 @@
 from typing import Optional, Sequence, Tuple
 from pathlib import Path
+import random
 import librosa
+import numpy as np
 import pandas as pd
 import soundfile as sf
+import torch
+from torch import Tensor
 from common import PathLike, KALDI_ROOT
 
 
@@ -253,6 +257,142 @@ def read_words_txt(txtfile: Path) -> dict:
             word, wid = line.rstrip().split(" ")
             words[wid] = word
     return words
+
+
+class TimitXVectors:
+    """
+    Dataset of X-Vector embeddings for speakers, sentences and words.
+    """
+    def __init__(self, data_dir: PathLike = "./data", val_size: float = 0.2,
+                 seed: Optional[int] = None):
+        """
+
+        Parameters
+        ----------
+        data_dir : Path | str
+            Path to TIMIT dataset and extracted embeddings.
+        val_size : float
+            Fraction of train dataset (speakers) to put in the validation set.
+        seed: int, Optional
+            Seed for train / validation split.
+
+        """
+        data_dir = Path(data_dir)
+
+        # read TIMIT info
+        doc_dir = data_dir / "TIMIT/DOC"
+        # prompt_id -> prompt
+        self.prompts = read_prompts(doc_dir / "PROMPTS.TXT")
+        # speaker_id -> (prompt_ids)
+        self.spkrsent = read_spkrsent(doc_dir / "SPKRSENT.TXT")
+        # dataframe with speaker info
+        self.spkrinfo = read_spkrinfo(doc_dir / "SPKRINFO.TXT")
+        # common words: word_id -> word; sorted ids
+        self.words = read_words_txt(data_dir / "words/WORDS.TXT")
+        self.word_ids = tuple(sorted(self.words.keys()))
+
+        # split speakers into subsets
+        if seed is not None:
+            random.seed(seed)
+        self.speakers = {"train": [], "val": [], "test": []}
+        for spkr_id, spkr_info in self.spkrinfo.iterrows():
+            if spkr_info["Use"] == "TRN":
+                if random.random() > val_size:
+                    self.speakers["train"].append(spkr_id)
+                else:
+                    self.speakers["val"].append(spkr_id)
+            else:
+                assert spkr_info["Use"] == "TST", "SPKRINFO.TXT read error"
+                self.speakers["test"].append(spkr_id)
+        # cast to array for better indexing
+        for subset in ("train", "val", "test"):
+            self.speakers[subset] = np.array(self.speakers[subset])
+
+        # load embeddings
+        # speaker_id ("ABC0") -> speaker embedding
+        xv_train = np.load(data_dir / "xvectors_train/spk_xvector.npz")
+        xv_test = np.load(data_dir / "xvectors_test/spk_xvector.npz")
+        # f"{speaker_id}_{word_id}" -> word embedding
+        xv_words = np.load(data_dir / "xvectors_words/xvector.npz")
+        # save embeddings dimension
+        for vec in xv_train.values():
+            self.emb_dim = vec.shape[0]
+            break
+        # copy embeddings to tensors, one per subset
+        self.voice_prints = {}
+        self.word_vectors = {}
+        for subset in ("train", "val", "test"):
+            spkrs = self.speakers[subset]
+            xv = xv_test if subset == "test" else xv_train
+            self.voice_prints[subset] = torch.zeros(
+                size=(len(spkrs), self.emb_dim),
+                dtype=torch.float32)
+            for i, spkr in enumerate(spkrs):
+                self.voice_prints[subset][i] = torch.FloatTensor(xv[spkr])
+                keys = [f"{spkr}_{wid}" for wid in self.word_ids]
+                self.word_vectors[spkr] = torch.FloatTensor(
+                    np.stack([xv_words.get(key, np.zeros(self.emb_dim))
+                             for key in keys]))
+
+    def sample_games(self, batch_size: int, subset: str = "train",
+                     num_speakers: int = 5
+                     ) -> Tuple[Tensor, np.ndarray, Tensor]:
+        """
+        Efficiently sample a batch of ISR games. Each game has the same amount
+        of speakers.
+
+        Returns
+        -------
+        voice_prints : Tensor
+            Stack of speaker voice prints for every game.
+            shape (batch_size, num_speakers, emb_dim)
+        target_ids : np.ndarray
+            IDs (strings, i.e., "ABC0") of selected speakers.
+            shape (batch_size,)
+        targets : Tensor
+            Relative index (integer from [1, n_speakers]) of target speaker for
+            every game.
+            shape (batch_size,)
+
+        """
+        # sample speakers for every game in batch
+        spkr_inds = torch.multinomial(
+            torch.ones(len(self.speakers[subset])).repeat((batch_size, 1)),
+            num_samples=num_speakers)
+        voice_prints = self.voice_prints[subset][spkr_inds, :]
+
+        # select target speakers
+        targets = torch.multinomial(
+            torch.ones(num_speakers),
+            num_samples=batch_size,
+            replacement=True
+        )
+        # indices inside subset (integers)
+        target_inds = spkr_inds[torch.arange(batch_size), targets]
+        # speaker ids (strings)
+        target_ids = self.speakers[subset][target_inds]
+
+        return voice_prints, target_ids, targets
+
+    def sample_words(self, speaker_ids: np.ndarray, num_words: int) -> Tensor:
+        "Randomly sample word embeddings of selected speakers"
+        b = speaker_ids.shape[0]
+        n = len(self.words)
+        word_inds = torch.multinomial(
+            torch.ones(n).repeat((b, 1)),
+            num_samples=num_words)
+        return torch.stack(
+            [self.word_vectors[spkr][inds]
+             for spkr, inds in zip(speaker_ids, word_inds)],
+            dim=0)
+
+    def get_word_embeddings(self, speaker_ids: np.ndarray,
+                            word_inds: Tensor) -> Tensor:
+        # TODO: store word embeddings differently to avoid using listcomp
+        return torch.stack(
+            [self.word_vectors[spkr][wrd.item()]
+             for spkr, wrd in zip(speaker_ids, word_inds)],
+            dim=0)
 
 
 if __name__ == "__main__":
