@@ -86,7 +86,7 @@ class Enquirer(nn.Module):
             nn.Linear(emb_dim * 3, emb_dim * 2),
             nn.ReLU(),
             nn.Linear(emb_dim * 2, n_outputs),
-            nn.Softmax(dim=-1) if n_outputs > 1 else nn.Identity()
+            nn.Softmax(dim=-1) if n_outputs > 1 else nn.Sigmoid()
         )
 
     def forward(self, G_hat: Tensor, X: Optional[Tensor] = None) -> Tensor:
