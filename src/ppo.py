@@ -12,8 +12,8 @@ from nnet import Enquirer
 
 LAMBDA = 0.95
 GAMMA = 0.9
-ACTOR_LR = 5e-3
-CRITIC_LR = 5e-3
+ACTOR_LR = 5e-4
+CRITIC_LR = 5e-4
 GRAD_CLIP = 1.0
 PPO_CLIP = 0.2
 ENTROPY_COEF = 0.01
@@ -98,17 +98,19 @@ class Actor(nn.Module):
         self.num_actions = num_actions
         self.model = Enquirer(emb_dim=input_size, n_outputs=num_actions)
 
-    def forward(self, x: Tensor) -> Tensor:
-        return self.model(x)
+    def forward(self, states: Tensor) -> Tensor:
+        g, x = unpack_states(states)
+        g_hat = torch.mean(g, dim=1)
+        return self.model(g_hat, x)
 
     @torch.no_grad()
     def act(self, states: Tensor) -> Tuple[Tensor, Tensor]:
         "Return actions and their probabilities according to current policy"
-        g, x = unpack_states(states)
-        g_hat = torch.mean(g, dim=1)
-        logits = self.model(g_hat, x)
-        probs_full = torch.softmax(logits, 1)
-        actions = torch.multinomial(probs_full, 1)
+        probs_full = self.forward(states)
+        if self.training:
+            actions = torch.multinomial(probs_full, num_samples=1)
+        else:
+            actions = torch.argmax(probs_full, dim=1, keepdim=True)
         probs = probs_full.gather(1, actions)
         return actions, probs
 
