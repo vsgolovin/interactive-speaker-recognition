@@ -2,6 +2,8 @@ from typing import Optional, Tuple
 import numpy as np
 import torch
 from torch import Tensor
+from isr.data import timit
+from isr.nnet import Guesser
 
 
 def pack_states(voice_prints: Tensor, word_embeddings: Optional[Tensor] = None,
@@ -54,3 +56,54 @@ def append_word_vectors(packed: Tensor, x: Tensor, num_speakers: int,
     packed[:, 0, 2] = word_index + 1
     j = 1 + num_speakers + word_index
     packed[:, j, :] = x
+
+
+class IsrEnvironment:
+    def __init__(self, dataset: timit.TimitXVectors, guesser: Guesser):
+        self.dset = dataset
+        self.guesser = guesser.eval()
+
+        # environment settings, updated by `reset()`
+        self.subset = None
+        self.batch_size = None
+        self.num_speakers = None
+        self.num_words = None
+
+        # environment state, updated by `reset()` and `step()`
+        self.word_index = None
+        self.speaker_ids = None
+        self.targets = None
+        self.states = None
+
+    def reset(self, subset: str = "train", batch_size: int = 32,
+              num_speakers: int = 5, num_words: int = 3) -> Tensor:
+        "Returns state tensor"
+        voice_prints, speaker_ids, targets = self.dset.sample_games(
+            batch_size, subset, num_speakers)
+        self.subset = subset
+        self.batch_size = batch_size
+        self.num_speakers = num_speakers
+        self.num_words = num_words
+        self.word_index = 0
+        self.speaker_ids = speaker_ids
+        self.targets = targets
+        self.states = pack_states(voice_prints, None, num_words)
+        return self.states
+
+    def step(self, word_inds: Tensor) -> Tuple[Tensor, Tensor]:
+        "Returns state and reward"
+        x = self.dset.get_word_embeddings(self.speaker_ids, word_inds)
+        append_word_vectors(self.states, x, self.num_speakers, self.word_index)
+        self.word_index += 1
+
+        # intermediate steps
+        if self.word_index < self.num_words:
+            return self.states, torch.zeros((self.batch_size,))
+
+        # final step => evaluate guesser
+        g, x = unpack_states(self.states)
+        with torch.no_grad():
+            output = self.guesser(g, x)
+            predictions = torch.argmax(output, 1)
+            rewards = (predictions == self.targets).to(torch.float32)
+            return self.states, rewards
