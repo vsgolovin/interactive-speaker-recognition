@@ -273,8 +273,9 @@ class TimitXVectors:
             Path to TIMIT dataset and extracted embeddings.
         val_size : float
             Fraction of train dataset (speakers) to put in the validation set.
-        seed: int, Optional
-            Seed for train / validation split.
+        seed : int, Optional
+            Seed for train / validation split. Uses `random` library and
+            restores previous random state after performing split.
 
         """
         data_dir = Path(data_dir)
@@ -293,6 +294,7 @@ class TimitXVectors:
 
         # split speakers into subsets
         if seed is not None:
+            cur_state = random.getstate()
             random.seed(seed)
         self.speakers = {"train": [], "val": [], "test": []}
         for spkr_id, spkr_info in self.spkrinfo.iterrows():
@@ -304,6 +306,11 @@ class TimitXVectors:
             else:
                 assert spkr_info["Use"] == "TST", "SPKRINFO.TXT read error"
                 self.speakers["test"].append(spkr_id)
+
+        # restore previous random state
+        if seed:
+            random.setstate(cur_state)
+
         # cast to array for better indexing
         for subset in ("train", "val", "test"):
             self.speakers[subset] = np.array(self.speakers[subset])
