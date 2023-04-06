@@ -2,7 +2,7 @@ from typing import Union
 import pytest
 import numpy as np
 import torch
-from src import nnet
+from isr import nnet
 
 
 @pytest.mark.parametrize("b,t,k,d", [(1, 3, 5, 16), (32, 5, 10, 128)])

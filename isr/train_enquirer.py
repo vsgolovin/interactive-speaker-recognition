@@ -5,9 +5,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import torch
 from torch import Tensor
-from nnet import Enquirer, Guesser
-import timit
-from envtools import pack_states, unpack_states, append_word_vectors
+from isr.nnet import Enquirer, Guesser
+from isr.data import timit
+from isr.envtools import pack_states, unpack_states, append_word_vectors
 from ppo import Buffer, PPO
 from train_guesser import SPLIT_SEED
 

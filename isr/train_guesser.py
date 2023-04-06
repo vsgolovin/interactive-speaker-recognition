@@ -15,8 +15,8 @@ import numpy as np
 import torch
 from torch import nn, optim
 import tqdm
-from nnet import Guesser
-import timit
+from isr.nnet import Guesser
+from isr.data import timit
 
 
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")

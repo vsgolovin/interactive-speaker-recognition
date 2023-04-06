@@ -7,7 +7,7 @@ import pandas as pd
 import soundfile as sf
 import torch
 from torch import Tensor
-from common import PathLike, KALDI_ROOT
+from isr.common import PathLike, KALDI_ROOT
 
 
 class TimitCorpus:

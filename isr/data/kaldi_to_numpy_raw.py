@@ -5,7 +5,7 @@ Script for importing raw x-vectors from `.ark` and `.scp` files.
 from typing import Iterable, Tuple
 import numpy as np
 from kaldi_io import read_vec_flt_scp
-from common import PathLike
+from isr.common import PathLike
 
 
 def read_vectors(scp_file: PathLike) -> Tuple[Tuple[str], Tuple[np.ndarray]]:

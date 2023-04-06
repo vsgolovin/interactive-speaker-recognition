@@ -1,6 +1,6 @@
 import pytest
 import torch
-from src import envtools
+from isr import envtools
 
 
 def test_packing():
