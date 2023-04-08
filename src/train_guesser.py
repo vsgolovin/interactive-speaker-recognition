@@ -23,10 +23,10 @@ NUM_WORDS = 3
 
 
 def main(split_seed: int, batch_size: int, iterations: int,
-         max_epochs: int, lr: float, weight_decay: Optional[float] = None):
+         max_epochs: int, lr: float, weight_decay: float):
     dm = XVectorsForGuesser(batch_size, iterations, seed=split_seed)
     guesser = LitGuesser(lr, weight_decay)
-    early_stopping = EarlyStopping(monitor="val_acc", patience=3, mode="max")
+    early_stopping = EarlyStopping(monitor="val_acc", patience=5, mode="max")
     save_best = ModelCheckpoint(save_top_k=1, filename="{epoch}-{val_acc:.2f}")
     accelerator = "gpu" if torch.cuda.is_available() else "cpu"
     logger = pl.loggers.TensorBoardLogger(save_dir="./output",
@@ -115,14 +115,14 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--split-seed", type=int, default=42,
                         help="seed used to perform train-val split")
-    parser.add_argument("--bs", type=int, default=50, help="batch size")
+    parser.add_argument("--bs", type=int, default=100, help="batch size")
     parser.add_argument("--iterations", type=int, default=200,
                         help="number of iterations per epoch")
     parser.add_argument("--max-epochs", type=int, default=50,
                         help="maximum number of epochs " +
                         "(training uses EarlyStopping)")
-    parser.add_argument("--lr", type=float, default=1e-3, help="learning rate")
-    parser.add_argument("--weight-decay", type=float, default=0.0,
+    parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
+    parser.add_argument("--weight-decay", type=float, default=1e-4,
                         help="L2 regularization")
     args = parser.parse_args()
 
