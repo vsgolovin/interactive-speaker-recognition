@@ -5,9 +5,9 @@ import torch
 from torch import nn, Tensor
 from torch.optim import Adam
 from torch.nn import functional as F
-from common import PathLike
-from envtools import unpack_states
-from nnet import Enquirer
+from isr.common import PathLike
+from isr.envtools import unpack_states
+from isr.nnet import Enquirer
 
 
 LAMBDA = 0.95

@@ -3,10 +3,10 @@ from tqdm import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
-from nnet import Enquirer, Guesser
-from envtools import IsrEnvironment
-from data import timit
-from ppo import Buffer, PPO
+from isr.nnet import Enquirer, Guesser
+from isr.envtools import IsrEnvironment
+from isr.data import timit
+from isr.ppo import Buffer, PPO
 
 
 SPLIT_SEED = 42
