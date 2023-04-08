@@ -3,13 +3,13 @@ from tqdm import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
-from isr.nnet import Enquirer, Guesser
-from isr.envtools import IsrEnvironment
-from isr.data import timit
+from nnet import Enquirer, Guesser
+from envtools import IsrEnvironment
+from data import timit
 from ppo import Buffer, PPO
-from train_guesser import SPLIT_SEED
 
 
+SPLIT_SEED = 42
 NUM_WORDS = 3
 NUM_SPEAKERS = 5
 NUM_ENVS = 33
