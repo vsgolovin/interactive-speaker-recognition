@@ -1,4 +1,4 @@
-from typing import Tuple, Union
+from typing import Optional, Tuple, Union
 from pathlib import Path
 import numpy as np
 import torch
@@ -10,18 +10,9 @@ from isr.envtools import unpack_states
 from isr.nnet import Enquirer
 
 
-LAMBDA = 0.95
-GAMMA = 0.9
-ACTOR_LR = 5e-4
-CRITIC_LR = 5e-4
-GRAD_CLIP = 1.0
-PPO_CLIP = 0.2
-ENTROPY_COEF = 0.01
-
-
 class Buffer:
-    def __init__(self, num_words: int, lambda_gae: float = LAMBDA,
-                 gamma: float = GAMMA):
+    def __init__(self, num_words: int, lambda_gae: float = 0.95,
+                 gamma: float = 0.9):
         self.T = num_words
         self.lam = lambda_gae
         self.gamma = gamma
@@ -142,14 +133,22 @@ class Critic(nn.Module):
 class PPO:
     "Proximal Policy Optimization with clipping"
     def __init__(self, input_size: int, num_actions: int,
-                 device: Union[torch.device, str]):
+                 device: Union[torch.device, str], lr_actor: float = 1e-4,
+                 lr_critic: float = 1e-4, ppo_clip: float = 0.2,
+                 grad_clip: Optional[float] = 1.0,
+                 entropy: Optional[float] = 0.01):
         if isinstance(device, str):
             device = torch.device(device)
         self.device = device
         self.actor = Actor(input_size, num_actions).to(self.device)
         self.critic = Critic(input_size).to(self.device)
-        self.actor_optim = Adam(self.actor.parameters(), lr=ACTOR_LR)
-        self.critic_optim = Adam(self.critic.parameters(), lr=CRITIC_LR)
+        self.actor_optim = Adam(self.actor.parameters(), lr=lr_actor)
+        self.critic_optim = Adam(self.critic.parameters(), lr=lr_critic)
+
+        # hyperparameters
+        self.grad_clip = grad_clip
+        self.ppo_clip = ppo_clip
+        self.entropy = entropy
 
     def train(self):
         self.actor.train()
@@ -177,15 +176,16 @@ class PPO:
                 frac = p.ravel() / p0
                 actor_loss = -torch.min(
                     frac * adv,
-                    torch.clamp(frac, 1 - PPO_CLIP, 1 + PPO_CLIP) * adv
+                    torch.clamp(frac, 1 - self.ppo_clip, 1 + self.ppo_clip)
+                    * adv
                 ).mean()
-                if ENTROPY_COEF:
-                    actor_loss -= ENTROPY_COEF * entropy.mean()
+                if self.entropy:
+                    actor_loss -= self.entropy * entropy.mean()
                 self.actor_optim.zero_grad()
                 actor_loss.backward()
-                if GRAD_CLIP:
+                if self.grad_clip:
                     nn.utils.clip_grad_norm_(
-                        self.actor.parameters(), GRAD_CLIP)
+                        self.actor.parameters(), self.grad_clip)
                 self.actor_optim.step()
 
                 # update critic
@@ -193,9 +193,9 @@ class PPO:
                 critic_loss = F.mse_loss(v_pred, v_target)
                 self.critic_optim.zero_grad()
                 critic_loss.backward()
-                if GRAD_CLIP:
+                if self.grad_clip:
                     nn.utils.clip_grad_norm_(
-                        self.critic.parameters(), GRAD_CLIP)
+                        self.critic.parameters(), self.grad_clip)
                 self.critic_optim.step()
 
                 actor_losses.append(actor_loss.item() * s.size(0))
