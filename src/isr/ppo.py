@@ -114,7 +114,7 @@ class Actor(nn.Module):
         g, x = unpack_states(states)
         g_hat = torch.mean(g, dim=1)
         probs_full = torch.softmax(self.model(g_hat, x), 1)
-        entropy = torch.sum(probs_full * torch.log(probs_full), 1)
+        entropy = -torch.sum(probs_full * torch.log(probs_full), 1)
         probs = probs_full.gather(1, actions.view(-1, 1))
         return probs, entropy
 
@@ -162,8 +162,11 @@ class PPO:
 
     def update(self, buffer: Buffer, bs: int, epochs: int
                ) -> Tuple[float, float]:
-        actor_losses = []
-        critic_losses = []
+        losses = {
+            "surrogate": 0.0,
+            "entropy": 0.0,
+            "critic": 0.0
+        }
 
         for _ in range(epochs):
             # iterate over whole buffer
@@ -174,15 +177,18 @@ class PPO:
                 # update actor
                 p, entropy = self.actor.get_probs_entropy(s, a)
                 frac = p.ravel() / p0
-                actor_loss = -torch.min(
+                loss_surrogate = -torch.min(
                     frac * adv,
                     torch.clamp(frac, 1 - self.ppo_clip, 1 + self.ppo_clip)
                     * adv
                 ).mean()
                 if self.entropy:
-                    actor_loss -= self.entropy * entropy.mean()
+                    loss_entropy = -self.entropy * entropy.mean()
+                else:
+                    loss_entropy = 0.0
+                loss_actor = loss_surrogate + loss_entropy
                 self.actor_optim.zero_grad()
-                actor_loss.backward()
+                loss_actor.backward()
                 if self.grad_clip:
                     nn.utils.clip_grad_norm_(
                         self.actor.parameters(), self.grad_clip)
@@ -190,21 +196,23 @@ class PPO:
 
                 # update critic
                 v_pred = self.critic(s).squeeze(1)
-                critic_loss = F.mse_loss(v_pred, v_target)
+                loss_critic = F.mse_loss(v_pred, v_target)
                 self.critic_optim.zero_grad()
-                critic_loss.backward()
+                loss_critic.backward()
                 if self.grad_clip:
                     nn.utils.clip_grad_norm_(
                         self.critic.parameters(), self.grad_clip)
                 self.critic_optim.step()
 
-                actor_losses.append(actor_loss.item() * s.size(0))
-                critic_losses.append(critic_loss.item() * s.size(0))
+                # update losses for logging
+                w = s.size(0) / (len(buffer) * epochs)
+                losses["surrogate"] += loss_surrogate.item() * w
+                if self.entropy:
+                    losses["entropy"] += loss_entropy.item() * w
+                losses["critic"] += loss_critic.item() * w
 
-        n_samples = len(buffer)
-        actor_loss = np.sum(actor_losses) / n_samples
-        critic_loss = np.sum(critic_losses) / n_samples
-        return actor_loss, critic_loss
+        losses["actor"] = losses["surrogate"] + losses["entropy"]
+        return losses
 
     @torch.no_grad()
     def step(self, states: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
