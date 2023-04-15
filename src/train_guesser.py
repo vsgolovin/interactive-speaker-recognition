@@ -28,7 +28,7 @@ def cli():
     pass
 
 
-@click.command()
+@cli.command()
 @click.option("--sd-file", type=click.Path(), default="./output/guesser.pth",
               help="file to save guesser state_dict to")
 @click.option("--seed", type=int, default=2303, help="global seed")
@@ -71,8 +71,8 @@ def train(sd_file: str, seed: int, split_seed: int, batch_size: int,
 @click.option("--batch-size", type=int, default=100, help="batch size")
 @click.option("--test-games", type=int, default=20000,
               help="total number of games (batch_size * iterations)")
-def evaluate(all_subsets: bool, sd_file: str, seed: int, split_seed: int,
-             batch_size: int, test_games: int):
+def test(all_subsets: bool, sd_file: str, seed: int, split_seed: int,
+         batch_size: int, test_games: int):
     pl.seed_everything(seed)
     iterations = test_games // batch_size
     dm = XVectorsForGuesser(batch_size, iterations, seed=split_seed)
@@ -167,5 +167,5 @@ class XVectorsForGuesser(pl.LightningDataModule):
 
 if __name__ == "__main__":
     cli.add_command(train)
-    cli.add_command(evaluate)
+    cli.add_command(test)
     cli()
