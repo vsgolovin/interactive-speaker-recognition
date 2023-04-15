@@ -29,7 +29,7 @@ NUM_SPEAKERS = 5
               help="number of updates to perform before every evaluation")
 @click.option("--num-updates", type=int, default=600,
               help="total number of model updates to perform")
-@click.option("--batch-size", type=int, default=200, help="batch size")
+@click.option("--batch-size", type=int, default=500, help="batch size")
 @click.option("--epochs-per-update", type=int, default=2,
               help="times to iterate over collected data on every update")
 @click.option("--lr-actor", type=float, default=1e-4,
@@ -95,7 +95,9 @@ def main(seed: int, split_seed: int, num_envs: int, episodes_per_update: int,
             # evaluate on validation set
             if (i + 1) % eval_period == 0:
                 r_avg = evaluate(ppo, env, "val", progress_bar=False)
-                max_reward = max(max_reward, r_avg)
+                if r_avg > max_reward:
+                    max_reward = r_avg
+                    ppo.save(output_dir)
                 pbar.set_postfix({"r_avg": r_avg})
                 avg_rewards[i // eval_period] = r_avg
                 writer.add_scalar("reward/val", r_avg,
@@ -106,8 +108,6 @@ def main(seed: int, split_seed: int, num_envs: int, episodes_per_update: int,
     # run_name=log_dir => do not create subfolder
     writer.add_hparams(hparams, {"val_acc": max_reward},
                        run_name=str(log_dir.absolute()))
-    # save `state_dict`s
-    ppo.save(output_dir)
 
     # plot avg. reward on validation set
     eval_step = episodes_per_update * eval_period
@@ -157,7 +157,7 @@ def create_log_dir(root="output/enquirer_logs"):
         for child in root.iterdir():
             if not child.is_dir():
                 continue
-            m = re.match(r"version_([\d])", child.stem)
+            m = re.match(r"version_([\d]+)", child.stem)
             if m:
                 idx = max(idx, int(m.group(1)))
     log_dir = root / f"version_{idx + 1}"
