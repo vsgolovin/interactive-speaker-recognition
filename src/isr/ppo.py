@@ -95,14 +95,21 @@ class Actor(nn.Module):
         return self.model(g_hat, x)
 
     @torch.no_grad()
-    def act(self, states: Tensor) -> Tuple[Tensor, Tensor]:
+    def act(self, states: Tensor, past_actions: Optional[Tensor] = None
+            ) -> Tuple[Tensor, Tensor]:
         "Return actions and their probabilities according to current policy"
         probs_full = self.forward(states)
         if self.training:
-            actions = torch.multinomial(probs_full, num_samples=1)
+            actions = torch.multinomial(probs_full, num_samples=1).squeeze(1)
         else:
-            actions = torch.argmax(probs_full, dim=1, keepdim=True)
-        probs = probs_full.gather(1, actions)
+            if past_actions is not None:
+                # make it impossible to select previously used action
+                probs_full[
+                    torch.arange(states.size(0)).view(-1, 1),
+                    past_actions
+                ] = 0
+            actions = torch.argmax(probs_full, dim=1)
+        probs = probs_full.gather(1, actions.view(-1, 1))
         return actions, probs
 
     def get_probs_entropy(self, states: Tensor, actions: Tensor
@@ -215,9 +222,10 @@ class PPO:
         return losses
 
     @torch.no_grad()
-    def step(self, states: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
+    def step(self, states: Tensor, past_actions: Optional[Tensor] = None
+             ) -> Tuple[Tensor, Tensor, Tensor]:
         states = states.to(self.device)
-        actions, probs = self.actor.act(states)
+        actions, probs = self.actor.act(states, past_actions)
         values = self.critic(states).squeeze(-1)
         return actions, probs, values
 

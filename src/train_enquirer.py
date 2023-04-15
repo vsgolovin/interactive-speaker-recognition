@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import torch
 from torch.utils.tensorboard import SummaryWriter
 from pytorch_lightning import seed_everything
-from isr.nnet import Enquirer, Guesser
+from isr.nnet import Guesser
 from isr.envtools import IsrEnvironment
 from isr.data import timit
 from isr.ppo import Buffer, PPO
@@ -56,8 +56,8 @@ def main(seed: int, split_seed: int, num_envs: int, episodes_per_update: int,
     env = IsrEnvironment(dset, guesser)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     ppo = PPO(512, len(dset.words), device=device, lr_actor=lr_actor,
-              lr_critic=lr_critic, ppo_clip=ppo_clip, grad_clip=grad_clip,
-              entropy=entropy)
+              lr_critic=lr_critic, ppo_clip=ppo_clip, entropy=entropy,
+              grad_clip=None if grad_clip == 0 else grad_clip)
     buffer = Buffer(num_words=NUM_WORDS)
 
     # tensorboard logger
@@ -119,7 +119,7 @@ def main(seed: int, split_seed: int, num_envs: int, episodes_per_update: int,
     plt.savefig(output_dir / "enquirer_training.png", dpi=75)
 
 
-def evaluate(ppo: Enquirer, env: IsrEnvironment,
+def evaluate(ppo: PPO, env: IsrEnvironment,
              subset: str = "val", episodes: int = 20000,
              parallel_envs: int = 50, progress_bar: bool = True) -> float:
     ppo.eval()
@@ -133,10 +133,13 @@ def evaluate(ppo: Enquirer, env: IsrEnvironment,
         cur_envs = min(episodes - performed, parallel_envs)
         states = env.reset(subset, batch_size=cur_envs,
                            num_speakers=NUM_SPEAKERS, num_words=NUM_WORDS)
-        for _ in range(NUM_WORDS):
-            actions, _, _ = ppo.step(states)
+        past_actions = torch.zeros((states.size(0), NUM_WORDS),
+                                   dtype=torch.int64)
+        for i in range(NUM_WORDS):
+            actions, _, _ = ppo.step(states, past_actions[:, :i])
             new_states, rewards = env.step(actions)
             states = new_states
+            past_actions[:, i] = actions
         all_rewards[performed:performed + cur_envs] = \
             rewards.cpu().numpy()
         performed += cur_envs
