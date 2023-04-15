@@ -17,7 +17,12 @@ NUM_WORDS = 3
 NUM_SPEAKERS = 5
 
 
-@click.command()
+@click.group()
+def cli():
+    pass
+
+
+@cli.command()
 @click.option("--seed", type=int, default=2008, help="global seed")
 @click.option("--split-seed", type=int, default=42,
               help="seed used to perform train-val split")
@@ -42,10 +47,10 @@ NUM_SPEAKERS = 5
               help="PPO entropy penalty coefficient")
 @click.option("--grad-clip", type=float, default=1.0,
               help="PPO gradient clipping")
-def main(seed: int, split_seed: int, num_envs: int, episodes_per_update: int,
-         eval_period: int, num_updates: int, batch_size: int,
-         epochs_per_update: int, lr_actor: float, lr_critic: float,
-         ppo_clip: float, entropy: float, grad_clip: float):
+def train(seed: int, split_seed: int, num_envs: int, episodes_per_update: int,
+          eval_period: int, num_updates: int, batch_size: int,
+          epochs_per_update: int, lr_actor: float, lr_critic: float,
+          ppo_clip: float, entropy: float, grad_clip: float):
     seed_everything(seed)
     hparams = locals()
     output_dir = Path("output")
@@ -119,6 +124,36 @@ def main(seed: int, split_seed: int, num_envs: int, episodes_per_update: int,
     plt.savefig(output_dir / "enquirer_training.png", dpi=75)
 
 
+@cli.command()
+@click.option("-A/--all", "all_subsets", is_flag=True, default=False)
+@click.option("--sd-file", type=click.Path(), default="./output/actor.pth",
+              help="path to file with guesser state_dict")
+@click.option("--seed", type=int, default=2008, help="global seed")
+@click.option("--split-seed", type=int, default=42,
+              help="seed used to perform train-val split")
+@click.option("--num-envs", "--batch-size", type=int, default=200,
+              help="number of ISR environments (games) to run in parallel")
+@click.option("--episodes", "--test-games", type=int, default=20000,
+              help="total number of episodes (games) to run")
+def test(all_subsets: bool, sd_file: str, seed: int, split_seed: int,
+         num_envs: int, episodes: int):
+    seed_everything(seed)
+    dset = timit.TimitXVectors(seed=split_seed)
+    guesser = Guesser(emb_dim=512)
+    guesser.load_state_dict(torch.load("models/guesser.pth",
+                                       map_location="cpu"))
+    env = IsrEnvironment(dset, guesser)
+    ppo = PPO(512, len(dset.words), device=torch.device("cpu"))
+    ppo.actor.load_state_dict(torch.load(sd_file))
+
+    subsets = ["test"]
+    if all_subsets:
+        subsets = ["train", "val"] + subsets
+    for subset in subsets:
+        r = evaluate(ppo, env, subset, episodes, num_envs, True)
+        print(f"Average reward (accuracy) on {subset}: {r}")
+
+
 def evaluate(ppo: PPO, env: IsrEnvironment,
              subset: str = "val", episodes: int = 20000,
              parallel_envs: int = 50, progress_bar: bool = True) -> float:
@@ -169,4 +204,6 @@ def create_log_dir(root="output/enquirer_logs"):
 
 
 if __name__ == "__main__":
-    main()
+    cli.add_command(train)
+    cli.add_command(test)
+    cli()
