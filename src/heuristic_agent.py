@@ -8,15 +8,15 @@ from isr.nnet import Guesser
 from isr.simple_agents import HeuristicAgent, RandomAgent
 
 
-NUM_SPEAKERS = 5
-NUM_WORDS = 3
-
-
 @click.command()
 @click.option("-A/--all", "all_subsets", is_flag=True, default=False)
 @click.option("--seed", type=int, default=2008, help="global seed")
 @click.option("--split-seed", type=int, default=42,
               help="seed used to perform train-val split")
+@click.option("-K", "--num-speakers", type=int, default=5,
+              help="number of speakers present in every game")
+@click.option("-T", "--num-words", type=int, default=3,
+              help="number of words asked in every game")
 @click.option("--num-envs", "--batch-size", type=int, default=200,
               help="number of ISR environments (games) to run in parallel")
 @click.option("--episodes", "--test-games", type=int, default=20000,
@@ -30,9 +30,9 @@ NUM_WORDS = 3
 @click.option("--temperature", type=float, default=0.05,
               help="softmax temperature for converting scores into " +
               "probabilities")
-def main(all_subsets: bool, seed: int, split_seed: int, num_envs: int,
-         episodes: int, random_agent: bool, agent_num_words: int,
-         nonuniform: bool, temperature: float):
+def main(all_subsets: bool, seed: int, split_seed: int, num_speakers: int,
+         num_words: int, num_envs: int, episodes: int, random_agent: bool,
+         agent_num_words: int, nonuniform: bool, temperature: float):
     # load dataset and guesser
     seed_everything(seed)
     dset = TimitXVectors(seed=split_seed)
@@ -57,7 +57,8 @@ def main(all_subsets: bool, seed: int, split_seed: int, num_envs: int,
     if all_subsets:
         subsets = ["train", "val"] + subsets
     for subset in subsets:
-        acc = evaluate(guesser, dset, agent, subset, num_envs, episodes)
+        acc = evaluate(guesser, dset, agent, subset, num_speakers, num_words,
+                       num_envs, episodes)
         print(f"Accuracy on {subset}: {acc}")
 
 
@@ -70,7 +71,8 @@ def read_word_scores(path: str):
     return np.array(scores, dtype=float)
 
 
-def evaluate(guesser: Guesser, dset, agent, subset, num_envs, episodes):
+def evaluate(guesser, dset, agent, subset, num_speakers, num_words, num_envs,
+             episodes):
     sampled_episodes = 0
     accuracy = 0.0
     guesser.eval()
@@ -80,9 +82,9 @@ def evaluate(guesser: Guesser, dset, agent, subset, num_envs, episodes):
             g, target_ids, targets = dset.sample_games(
                 batch_size=bs,
                 subset=subset,
-                num_speakers=NUM_SPEAKERS
+                num_speakers=num_speakers
             )
-            word_inds = agent.sample(num_envs, NUM_WORDS)
+            word_inds = agent.sample(num_envs, num_words)
             x = torch.stack(
                 [dset.word_vectors[spkr][inds]
                  for spkr, inds in zip(target_ids, word_inds)],
