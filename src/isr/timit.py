@@ -1,4 +1,4 @@
-from typing import Optional, Sequence, Tuple
+from typing import Optional, Sequence, Tuple, Union
 from pathlib import Path
 import random
 import librosa
@@ -7,11 +7,10 @@ import pandas as pd
 import soundfile as sf
 import torch
 from torch import Tensor
-from isr.common import PathLike, KALDI_ROOT
 
 
 class TimitCorpus:
-    def __init__(self, path: PathLike):
+    def __init__(self, path: Union[Path, str]):
         path = Path(path)
         assert path.exists() and path.is_dir(), f"Invalid path {path}"
         self.root = path
@@ -45,7 +44,7 @@ class TimitCorpus:
         assert spkr_dir.exists(), f"{spkr_dir} not found"
         return spkr_dir
 
-    def split_common_sentences(self, save_to: PathLike,
+    def split_common_sentences(self, save_to: Union[Path, str],
                                drop: Sequence[str] = ["an"]) -> None:
         # output directory
         save_to = Path(save_to)
@@ -72,18 +71,22 @@ class TimitCorpus:
                     )
         self._save_word_ids(save_to)  # writes to `save_to`/WORDS.TXT
 
-    def kaldi_data_prep(self, words_dir: PathLike,
-                        output_dir: PathLike = "data/kaldi"):
+    def kaldi_data_prep(self, words_dir: Union[Path, str],
+                        kaldi_root: Union[Path, str],
+                        output_dir: Union[Path, str] = "data/kaldi"):
         """
         Create files needed for extracting embeddings with Kaldi.
         """
+        kaldi_root = Path(kaldi_root)
+        assert kaldi_root.exists() and kaldi_root.is_dir()
+
         # extract single word recordings if not done previously
         words_dir = Path(words_dir)
         if not words_dir.exists():
             self.split_common_sentences(words_dir)
 
         # check for sph2pipe
-        sph2pipe = KALDI_ROOT / "tools/sph2pipe_v2.5/sph2pipe"
+        sph2pipe = kaldi_root / "tools/sph2pipe_v2.5/sph2pipe"
         assert sph2pipe.exists()
         sph2pipe_str = str(sph2pipe) + " -f wav"
 
@@ -137,7 +140,7 @@ class TimitCorpus:
         for spkr_id in self.spkrinfo.index:
             spkr_dir = words_dir / spkr_id
             spk2utt.write(spkr_id)
-            for word_id in words.values():
+            for word_id in words.keys():
                 utt_id = spkr_id + "_" + word_id
                 wav_file = spkr_dir / f"{word_id}.WAV"
                 assert wav_file.exists()
@@ -153,7 +156,7 @@ class TimitCorpus:
         spk2utt.close()
 
 
-def read_prompts(file: PathLike) -> dict:
+def read_prompts(file: Union[Path, str]) -> dict:
     """
     Read prompts from PROMPTS.TXT file.
     Return dictionary prompt_id -> prompt.
@@ -175,7 +178,7 @@ def read_prompts(file: PathLike) -> dict:
     return prompts
 
 
-def read_spkrsent(file: PathLike) -> dict:
+def read_spkrsent(file: Union[Path, str]) -> dict:
     """
     Read SPKRSENT.TXT to obtain sentence (prompt) ids for every speaker.
     Return dictionary speaker_id -> tuple of prompt_id's
@@ -199,7 +202,7 @@ def read_spkrsent(file: PathLike) -> dict:
     return speaker_to_prompt
 
 
-def read_spkrinfo(file: PathLike) -> pd.DataFrame:
+def read_spkrinfo(file: Union[Path, str]) -> pd.DataFrame:
     """
     Read SPKRINFO.TXT to obtain data about every speaker.
     """
@@ -230,7 +233,7 @@ def read_spkrinfo(file: PathLike) -> pd.DataFrame:
     return df.set_index("ID")
 
 
-def read_wrd_file(file: PathLike) -> Sequence[Tuple[int, int, str]]:
+def read_wrd_file(file: Union[Path, str]) -> Sequence[Tuple[int, int, str]]:
     """
     Read a .WRD file with timestamps for every word in a recording.
     """
@@ -263,8 +266,8 @@ class TimitXVectors:
     """
     Dataset of X-Vector embeddings for speakers, sentences and words.
     """
-    def __init__(self, data_dir: PathLike = "./data", val_size: float = 0.2,
-                 seed: Optional[int] = None):
+    def __init__(self, data_dir: Union[Path, str] = "./data",
+                 val_size: float = 0.2, seed: Optional[int] = None):
         """
 
         Parameters
@@ -400,8 +403,3 @@ class TimitXVectors:
             [self.word_vectors[spkr][wrd.item()]
              for spkr, wrd in zip(speaker_ids, word_inds)],
             dim=0)
-
-
-if __name__ == "__main__":
-    timit = TimitCorpus("data/TIMIT")
-    timit.kaldi_data_prep("data/words", "data/kaldi")

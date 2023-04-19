@@ -12,7 +12,7 @@ import numpy as np
 import torch
 from pytorch_lightning import seed_everything
 import click
-from isr.data.timit import TimitXVectors, read_words_txt
+from isr.timit import TimitXVectors, read_words_txt
 from isr.nnet import Guesser
 
 

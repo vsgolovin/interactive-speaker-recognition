@@ -8,15 +8,15 @@ Notes:
   * Final test accuracy higher than in the paper.
 """
 
-from typing import Generator, Optional
+from pathlib import Path
+from typing import Generator, Optional, Union
 import click
 import torch
 from torch import nn, optim, Tensor
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
-from isr.common import PathLike
 from isr.nnet import Guesser
-from isr.data import timit
+from isr import timit
 
 
 @click.group()
@@ -132,11 +132,11 @@ class LitGuesser(pl.LightningModule):
         self.log("test_loss", loss.item())
         self.log("test_acc", acc.item())
 
-    def save(self, f: PathLike):
+    def save(self, f: Union[Path, str]):
         "Save only Guesser state_dict"
         torch.save(self.model.state_dict(), f)
 
-    def load(self, f: PathLike):
+    def load(self, f: Union[Path, str]):
         "Loader Guesser state_dict from file"
         self.model.load_state_dict(torch.load(f))
 
@@ -144,7 +144,7 @@ class LitGuesser(pl.LightningModule):
 class XVectorsForGuesser(pl.LightningDataModule):
     def __init__(self, num_speakers: int, num_words: int,
                  batch_size: int, iterations_per_epoch: int,
-                 data_dir: PathLike = "./data", val_size: float = 0.2,
+                 data_dir: Union[Path, str] = "./data", val_size: float = 0.2,
                  seed: Optional[int] = None):
         super().__init__()
         self.K = num_speakers

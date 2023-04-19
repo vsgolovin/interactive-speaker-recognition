@@ -5,7 +5,6 @@ import torch
 from torch import nn, Tensor
 from torch.optim import Adam
 from torch.nn import functional as F
-from isr.common import PathLike
 from isr.envtools import unpack_states
 from isr.nnet import Enquirer
 
@@ -229,7 +228,7 @@ class PPO:
         values = self.critic(states).squeeze(-1)
         return actions, probs, values
 
-    def save(self, output_dir: PathLike):
+    def save(self, output_dir: Union[Path, str]):
         path = Path(output_dir)
         torch.save(self.actor.state_dict(), path / "actor.pth")
         torch.save(self.critic.state_dict(), path / "critic.pth")

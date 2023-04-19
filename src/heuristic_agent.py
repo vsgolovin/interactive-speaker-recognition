@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from pytorch_lightning import seed_everything
 import click
-from isr.data.timit import TimitXVectors
+from isr.timit import TimitXVectors
 from isr.nnet import Guesser
 from isr.simple_agents import HeuristicAgent, RandomAgent
 

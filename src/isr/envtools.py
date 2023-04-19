@@ -2,7 +2,7 @@ from typing import Optional, Tuple
 import numpy as np
 import torch
 from torch import Tensor
-from isr.data import timit
+from isr import timit
 from isr.nnet import Guesser
 
 

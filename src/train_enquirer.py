@@ -9,7 +9,7 @@ from torch.utils.tensorboard import SummaryWriter
 from pytorch_lightning import seed_everything
 from isr.nnet import Guesser
 from isr.envtools import IsrEnvironment
-from isr.data import timit
+from isr import timit
 from isr.ppo import Buffer, PPO
 
 
