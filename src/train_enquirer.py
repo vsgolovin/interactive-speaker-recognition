@@ -1,85 +1,123 @@
 from pathlib import Path
-from typing import Tuple, Iterable
+import re
 from tqdm import tqdm
+import click
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
-from torch import Tensor
-from nnet import Enquirer, Guesser
-import timit
-from envtools import pack_states, unpack_states, append_word_vectors
-from ppo import Buffer, PPO
-from train_guesser import SPLIT_SEED
+from torch.utils.tensorboard import SummaryWriter
+from pytorch_lightning import seed_everything
+from isr.nnet import Guesser
+from isr.envtools import IsrEnvironment
+from isr import timit
+from isr.ppo import Buffer, PPO
 
 
-NUM_WORDS = 3
-NUM_SPEAKERS = 5
-NUM_ENVS = 33
-BATCHES_PER_UPDATE = 10
-EPISODES_PER_UPDATE = NUM_ENVS * BATCHES_PER_UPDATE
-UPDATES_PER_EVAL = 50
-TOTAL_UPDATES = 400
-NUM_EPISODES = EPISODES_PER_UPDATE * TOTAL_UPDATES
-BATCH_SIZE = 500
-EPOCHS_PER_UPDATE = 2
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+@click.group()
+def cli():
+    pass
 
 
-def main():
+@cli.command()
+@click.option("--seed", type=int, default=2008, help="global seed")
+@click.option("--split-seed", type=int, default=42,
+              help="seed used to perform train-val split")
+@click.option("-K", "--num-speakers", type=int, default=5,
+              help="number of speakers present in every game")
+@click.option("-T", "--num-words", type=int, default=3,
+              help="number of words asked in every game")
+@click.option("--num-envs", type=int, default=33,
+              help="number of ISR environments (games) to run in parallel")
+@click.option("--episodes-per-update", type=int, default=330,
+              help="number of episodes to sample before performing an update")
+@click.option("--eval-period", type=int, default=60,
+              help="number of updates to perform before every evaluation")
+@click.option("--num-updates", type=int, default=600,
+              help="total number of model updates to perform")
+@click.option("--batch-size", type=int, default=500, help="batch size")
+@click.option("--epochs-per-update", type=int, default=2,
+              help="times to iterate over collected data on every update")
+@click.option("--lr-actor", type=float, default=1e-4,
+              help="PPO actor learning rate")
+@click.option("--lr-critic", type=float, default=1e-4,
+              help="PPO critic learning rate")
+@click.option("--ppo-clip", type=float, default=0.2,
+              help="PPO clipping parameter (epsilon)")
+@click.option("--entropy", type=float, default=0.01,
+              help="PPO entropy penalty coefficient")
+@click.option("--grad-clip", type=float, default=1.0,
+              help="PPO gradient clipping")
+def train(seed: int, split_seed: int, num_speakers: int, num_words: int,
+          num_envs: int, episodes_per_update: int, eval_period: int,
+          num_updates: int, batch_size: int, epochs_per_update: int,
+          lr_actor: float, lr_critic: float, ppo_clip: float, entropy: float,
+          grad_clip: float):
+    seed_everything(seed)
+    hparams = locals()
     output_dir = Path("output")
-    dset = timit.TimitXVectors(seed=SPLIT_SEED)
+    dset = timit.TimitXVectors(seed=split_seed)
     guesser = Guesser(emb_dim=512)
     guesser.load_state_dict(torch.load("models/guesser.pth",
                                        map_location="cpu"))
     env = IsrEnvironment(dset, guesser)
-    ppo = PPO(512, len(dset.words), device=DEVICE)
-    buffer = Buffer(num_words=NUM_WORDS)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    ppo = PPO(512, len(dset.words), device=device, lr_actor=lr_actor,
+              lr_critic=lr_critic, ppo_clip=ppo_clip, entropy=entropy,
+              grad_clip=None if grad_clip == 0 else grad_clip)
+    buffer = Buffer(num_words=num_words)
 
-    # evaluate SR system before training enquirer
-    r_train, r_val = [evaluate(ppo, env, subset=subset)
-                      for subset in ("train", "val")]
-    print("Average reward (== accuracy) before training enquirer:")
-    print(f"  train: {r_train:.3f}")
-    print(f"  validation: {r_val:.3f}")
+    # tensorboard logger
+    log_dir = create_log_dir()
+    writer = SummaryWriter(log_dir=log_dir)
 
     # train enquirer
-    avg_rewards = [r_val]
+    avg_rewards = np.zeros(num_updates // eval_period)
     ppo.train()
+    BATCHES_PER_UPDATE = episodes_per_update // num_envs
+    NUM_EPISODES = episodes_per_update * num_updates
+    episode_count = 0
+    max_reward = 0.0
     with tqdm(desc="PPO training", total=NUM_EPISODES) as pbar:
-        for i in range(TOTAL_UPDATES):
+        for i in range(num_updates):
             # actual training
             for _ in range(BATCHES_PER_UPDATE):
-                states = env.reset("train", batch_size=NUM_ENVS,
-                                   num_speakers=NUM_SPEAKERS,
-                                   num_words=NUM_WORDS)
-                for _ in range(NUM_WORDS):
+                states = env.reset("train", batch_size=num_envs,
+                                   num_speakers=num_speakers,
+                                   num_words=num_words)
+                for _ in range(num_words):
                     actions, probs, values = ppo.step(states)
                     new_states, rewards = env.step(actions)
                     buffer.append(states, actions, probs, rewards, values)
                     states = new_states
-                pbar.update(NUM_ENVS)
-            ppo.update(buffer, BATCH_SIZE, EPOCHS_PER_UPDATE)
+                pbar.update(num_envs)
+                episode_count += num_envs
+                writer.add_scalar("reward/train", rewards.mean().item(),
+                                  global_step=episode_count)
+            losses = ppo.update(buffer, batch_size, epochs_per_update)
             buffer.empty()
+            for k, v in losses.items():
+                writer.add_scalar(f"loss/{k}", v, global_step=episode_count)
 
             # evaluate on validation set
-            if (i + 1) % UPDATES_PER_EVAL == 0:
-                avg_rewards.append(evaluate(ppo, env, "val",
-                                            progress_bar=False))
+            if (i + 1) % eval_period == 0:
+                r_avg = evaluate(ppo, env, "val", progress_bar=False)
+                if r_avg > max_reward:
+                    max_reward = r_avg
+                    ppo.save(output_dir)
+                pbar.set_postfix({"r_avg": r_avg})
+                avg_rewards[i // eval_period] = r_avg
+                writer.add_scalar("reward/val", r_avg,
+                                  global_step=episode_count)
                 ppo.train()
 
-    # evaluate SR system after training enquirer
-    r_train = evaluate(ppo, env, subset="train")
-    print("Average reward (== accuracy) after training enquirer:")
-    print(f"  train: {r_train:.3f}")
-    print(f"  validation: {avg_rewards[-1]:.3f}")
-
-    # save actor and critic weights
-    ppo.save(output_dir)
+    # save hyperparams and best reward (accuracy)
+    # run_name=log_dir => do not create subfolder
+    writer.add_hparams(hparams, {"val_acc": max_reward},
+                       run_name=str(log_dir.absolute()))
 
     # plot avg. reward on validation set
-    assert len(avg_rewards) == TOTAL_UPDATES // UPDATES_PER_EVAL + 1
-    eval_step = EPISODES_PER_UPDATE * UPDATES_PER_EVAL
-    episode_count = np.arange(0, NUM_EPISODES + 1, eval_step)
+    eval_step = episodes_per_update * eval_period
+    episode_count = np.arange(eval_step, NUM_EPISODES + 1, eval_step)
     plt.figure()
     plt.plot(episode_count, avg_rewards, "bo-")
     plt.ylabel("Avg. reward on validation set")
@@ -87,59 +125,43 @@ def main():
     plt.savefig(output_dir / "enquirer_training.png", dpi=75)
 
 
-class IsrEnvironment:
-    def __init__(self, dataset: timit.TimitXVectors, guesser: Guesser):
-        self.dset = dataset
-        self.guesser = guesser.eval()
+@cli.command()
+@click.option("-A/--all", "all_subsets", is_flag=True, default=False)
+@click.option("--sd-file", type=click.Path(), default="./output/actor.pth",
+              help="path to file with guesser state_dict")
+@click.option("--seed", type=int, default=2008, help="global seed")
+@click.option("--split-seed", type=int, default=42,
+              help="seed used to perform train-val split")
+@click.option("-K", "--num-speakers", type=int, default=5,
+              help="number of speakers present in every game")
+@click.option("-T", "--num-words", type=int, default=3,
+              help="number of words asked in every game")
+@click.option("--num-envs", "--batch-size", type=int, default=200,
+              help="number of ISR environments (games) to run in parallel")
+@click.option("--episodes", "--test-games", type=int, default=20000,
+              help="total number of episodes (games) to run")
+def test(all_subsets: bool, sd_file: str, seed: int, split_seed: int,
+         num_speakers: int, num_words: int, num_envs: int, episodes: int):
+    seed_everything(seed)
+    dset = timit.TimitXVectors(seed=split_seed)
+    guesser = Guesser(emb_dim=512)
+    guesser.load_state_dict(torch.load("models/guesser.pth",
+                                       map_location="cpu"))
+    env = IsrEnvironment(dset, guesser)
+    ppo = PPO(512, len(dset.words), device=torch.device("cpu"))
+    ppo.actor.load_state_dict(torch.load(sd_file))
 
-        # environment settings, updated by `reset()`
-        self.subset = None
-        self.batch_size = None
-        self.num_speakers = None
-        self.num_words = None
-
-        # environment state, updated by `reset()` and `step()`
-        self.word_index = None
-        self.speaker_ids = None
-        self.targets = None
-        self.states = None
-
-    def reset(self, subset: str = "train", batch_size: int = 32,
-              num_speakers: int = 5, num_words: int = 3) -> Tensor:
-        "Returns state tensor"
-        voice_prints, speaker_ids, targets = self.dset.sample_games(
-            batch_size, subset, num_speakers)
-        self.subset = subset
-        self.batch_size = batch_size
-        self.num_speakers = num_speakers
-        self.num_words = num_words
-        self.word_index = 0
-        self.speaker_ids = speaker_ids
-        self.targets = targets
-        self.states = pack_states(voice_prints, None, num_words)
-        return self.states
-
-    def step(self, word_inds: Iterable[int]) -> Tuple[Tensor, Tensor]:
-        "Returns state and reward"
-        x = self.dset.get_word_embeddings(self.speaker_ids, word_inds)
-        append_word_vectors(self.states, x, self.num_speakers, self.word_index)
-        self.word_index += 1
-
-        # intermediate steps
-        if self.word_index < self.num_words:
-            return self.states, torch.zeros((self.batch_size,))
-
-        # final step => evaluate guesser
-        g, x = unpack_states(self.states)
-        with torch.no_grad():
-            output = self.guesser(g, x)
-            predictions = torch.argmax(output, 1)
-            rewards = (predictions == self.targets).to(torch.float32)
-            return self.states, rewards
+    subsets = ["test"]
+    if all_subsets:
+        subsets = ["train", "val"] + subsets
+    for subset in subsets:
+        r = evaluate(ppo, env, subset, num_speakers, num_words,
+                     episodes, num_envs, True)
+        print(f"Average reward (accuracy) on {subset}: {r}")
 
 
-def evaluate(ppo: Enquirer, env: IsrEnvironment,
-             subset: str = "val", episodes: int = 20000,
+def evaluate(ppo: PPO, env: IsrEnvironment, subset: str = "val",
+             num_speakers: int = 5, num_words: int = 3, episodes: int = 20000,
              parallel_envs: int = 50, progress_bar: bool = True) -> float:
     ppo.eval()
     all_rewards = np.zeros(episodes)
@@ -151,11 +173,14 @@ def evaluate(ppo: Enquirer, env: IsrEnvironment,
     while performed < episodes:
         cur_envs = min(episodes - performed, parallel_envs)
         states = env.reset(subset, batch_size=cur_envs,
-                           num_speakers=NUM_SPEAKERS, num_words=NUM_WORDS)
-        for _ in range(NUM_WORDS):
-            actions, _, _ = ppo.step(states)
+                           num_speakers=num_speakers, num_words=num_words)
+        past_actions = torch.zeros((states.size(0), num_words),
+                                   dtype=torch.int64)
+        for i in range(num_words):
+            actions, _, _ = ppo.step(states, past_actions[:, :i])
             new_states, rewards = env.step(actions)
             states = new_states
+            past_actions[:, i] = actions
         all_rewards[performed:performed + cur_envs] = \
             rewards.cpu().numpy()
         performed += cur_envs
@@ -169,5 +194,22 @@ def evaluate(ppo: Enquirer, env: IsrEnvironment,
     return np.mean(all_rewards)
 
 
+def create_log_dir(root="output/enquirer_logs"):
+    root = Path(root)
+    idx = -1
+    if root.exists():
+        for child in root.iterdir():
+            if not child.is_dir():
+                continue
+            m = re.match(r"version_([\d]+)", child.stem)
+            if m:
+                idx = max(idx, int(m.group(1)))
+    log_dir = root / f"version_{idx + 1}"
+    log_dir.mkdir(parents=True)
+    return log_dir
+
+
 if __name__ == "__main__":
-    main()
+    cli.add_command(train)
+    cli.add_command(test)
+    cli()

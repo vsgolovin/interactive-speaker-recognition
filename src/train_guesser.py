@@ -1,150 +1,181 @@
 """
 Notes:
-  * Using not 128-, but 512-dimensional embeddings, as it is not clear how to
-    perform dimensionality reduction.
+  * Using not 128-, but 512-dimensional embeddings, as it is not clear how
+   (and why) to perform dimensionality reduction.
   * Paper states, that guesser was trained with batch size of 1024. Not sure
     if this means 1024 games or 1024 speakers. It also says that there were
     45k training games in total, which would mean just 45 1024-game batches.
-  * Final test accuracy appears to be higher than in the paper.
+  * Final test accuracy higher than in the paper.
 """
 
 from pathlib import Path
-from typing import Tuple
-import matplotlib.pyplot as plt
-import numpy as np
+from typing import Generator, Optional, Union
+import click
 import torch
-from torch import nn, optim
-import tqdm
-from nnet import Guesser
-import timit
+from torch import nn, optim, Tensor
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
+from isr.nnet import Guesser
+from isr import timit
 
 
-DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-NUM_SPEAKERS = 5
-NUM_WORDS = 3
-EPOCHS = 30
-ITERATIONS = 200  # per epoch
-BATCH_SIZE = 50
-TEST_GAMES = 20000
-SPLIT_SEED = 42
+@click.group()
+def cli():
+    pass
 
 
-def main():
-    # directory to save model weights and training plot
-    output_dir = Path("./output")
-    if not output_dir.exists():
-        output_dir.mkdir()
-    else:
-        assert output_dir.is_dir()
-    save_to = output_dir / "guesser.pth"
-
-    # initialize dataset wrapper, model and optimizer
-    dset = timit.TimitXVectors(seed=SPLIT_SEED)
-    guesser = Guesser(emb_dim=512, output_format="logit").to(DEVICE)
-    optimizer = optim.Adam(guesser.parameters(), weight_decay=5e-4)
-
-    # train the model
-    train_results = np.zeros((2, EPOCHS))
-    val_results = np.zeros_like(train_results)
-    best_epoch = 0
-    best_acc = 0.0
-    with tqdm.tqdm(total=EPOCHS) as pbar:
-        for epoch in range(EPOCHS):
-
-            # train and validate
-            train_results[:, epoch] = run_n_iterations(
-                dset, guesser, optimizer, "train", BATCH_SIZE, ITERATIONS)
-            val_loss, val_acc = run_n_iterations(
-                dset, guesser, optimizer, "val", BATCH_SIZE, ITERATIONS)
-            val_results[:, epoch] = [val_loss, val_acc]
-
-            # save model if validation accuracy is highest
-            if val_acc > best_acc:
-                best_epoch = epoch
-                best_acc = val_acc
-                torch.save(guesser.state_dict(), save_to)
-
-            # update progress bar
-            pbar.update(1)
-            pbar.set_postfix({
-                "train_acc": train_results[1, epoch],
-                "val_acc": val_results[1, epoch]
-            })
-
-    # load best model
-    print(f"Loading model weights from epoch {best_epoch}.")
-    guesser.load_state_dict(torch.load(save_to))
-
-    # check model performance on test set
-    test_loss, test_acc = run_n_iterations(
-        dset, guesser, optimizer, "test", BATCH_SIZE, TEST_GAMES // BATCH_SIZE)
-    print(f"[test] loss = {test_loss}, accuracy = {test_acc}")
-
-    # plot results
-    plt.figure()
-    epochs = np.arange(1, EPOCHS + 1)
-    plt.plot(epochs, train_results[0], "b.-", label="train")
-    plt.plot(epochs, val_results[0], "r.-", label="validation")
-    plt.plot([best_epoch + 1], [test_loss], "k.", label="test")
-    plt.legend(loc="center right")
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.twinx()
-    plt.plot(epochs, train_results[1], "b.:", label="train")
-    plt.plot(epochs, val_results[1], "r.:", label="validation")
-    plt.plot([best_epoch + 1], [test_acc], "k.", label="test")
-    plt.ylabel("Accuracy")
-    plt.savefig(output_dir / "guesser_training.png", dpi=75)
+@cli.command()
+@click.option("--sd-file", type=click.Path(), default="./output/guesser.pth",
+              help="file to save guesser state_dict to")
+@click.option("--seed", type=int, default=2303, help="global seed")
+@click.option("--split-seed", type=int, default=42,
+              help="seed used to perform train-val split")
+@click.option("-K", "--num-speakers", type=int, default=5,
+              help="number of speakers present in every game")
+@click.option("-T", "--num-words", type=int, default=3,
+              help="number of words asked in every game")
+@click.option("--batch-size", type=int, default=100, help="batch size")
+@click.option("--iterations", type=int, default=200,
+              help="number of iterations per epoch")
+@click.option("--max-epochs", type=int, default=50,
+              help="maximum number of epochs (training uses EarlyStopping)")
+@click.option("--lr", type=float, default=1e-4, help="learning rate")
+@click.option("--weight-decay", type=float, default=1e-4,
+              help="L2 regularization")
+def train(sd_file: str, seed: int, split_seed: int, num_speakers: int,
+          num_words: int, batch_size: int, iterations: int, max_epochs: int,
+          lr: float, weight_decay: float):
+    pl.seed_everything(seed)
+    dm = XVectorsForGuesser(num_speakers, num_words, batch_size, iterations,
+                            seed=split_seed)
+    guesser = LitGuesser(lr, weight_decay)
+    early_stopping = EarlyStopping(monitor="val_acc", patience=5, mode="max")
+    save_best = ModelCheckpoint(save_top_k=1, filename="{epoch}-{val_acc:.2f}")
+    accelerator = "gpu" if torch.cuda.is_available() else "cpu"
+    logger = pl.loggers.TensorBoardLogger(save_dir="./output",
+                                          name="guesser_logs")
+    trainer = pl.Trainer(logger=logger, accelerator=accelerator,
+                         max_epochs=max_epochs,
+                         callbacks=[early_stopping, save_best],
+                         reload_dataloaders_every_n_epochs=1)
+    trainer.fit(model=guesser, datamodule=dm)
+    model = LitGuesser.load_from_checkpoint(save_best.best_model_path)
+    model.save(sd_file)
 
 
-def forward_step(guesser: Guesser, batch: Tuple):
-    G, X, target = [t.to(DEVICE) for t in batch]
-    batch_size = len(target)
-    output = guesser(G, X)
-    accuracy = float((output.argmax(-1) == target).sum() / batch_size)
-    if guesser.output_format == "logit":
-        loss_fn = nn.CrossEntropyLoss()
-    elif guesser.output_format == "logprob":
-        loss_fn = nn.NLLLoss()
-    else:
-        raise Exception("Please use Guesser with 'logit' or 'logprob' output")
-    loss = loss_fn(output, target)
-    return loss, accuracy
+@cli.command()
+@click.option("-A/--all", "all_subsets", is_flag=True, default=False)
+@click.option("--sd-file", type=click.Path(), default="./output/guesser.pth",
+              help="path to file with guesser state_dict")
+@click.option("--seed", type=int, default=2303, help="global seed")
+@click.option("--split-seed", type=int, default=42,
+              help="seed used to perform train-val split")
+@click.option("-K", "--num-speakers", type=int, default=5,
+              help="number of speakers present in every game")
+@click.option("-T", "--num-words", type=int, default=3,
+              help="number of words asked in every game")
+@click.option("--batch-size", type=int, default=100, help="batch size")
+@click.option("--test-games", type=int, default=20000,
+              help="total number of games (batch_size * iterations)")
+def test(all_subsets: bool, sd_file: str, seed: int, split_seed: int,
+         num_speakers: int, num_words: int, batch_size: int, test_games: int):
+    pl.seed_everything(seed)
+    iterations = test_games // batch_size
+    dm = XVectorsForGuesser(num_speakers, num_words, batch_size, iterations,
+                            seed=split_seed)
+    guesser = LitGuesser()
+    guesser.model.load_state_dict(torch.load(sd_file,
+                                             map_location="cpu"))
+    trainer = pl.Trainer(logger=False, accelerator="cpu")
+    dloaders = [dm.test_dataloader()]
+    if all_subsets:
+        dloaders = [dm.train_dataloader(), dm.val_dataloader()] + dloaders
+    trainer.test(model=guesser, dataloaders=dloaders)
 
 
-def training_step(guesser: Guesser, batch: Tuple, optimizer: optim.Optimizer):
-    guesser.train()
-    loss, accuracy = forward_step(guesser, batch)
-    optimizer.zero_grad()
-    loss.backward()
-    optimizer.step()
-    return loss.item(), accuracy
+class LitGuesser(pl.LightningModule):
+    def __init__(self, lr: float = 3e-4, weight_decay: float = 0.):
+        super().__init__()
+        self.model = Guesser(output_format="logit")
+        self.lr = lr
+        self.weight_decay = weight_decay
+        self.loss_fn = nn.CrossEntropyLoss()
+        self.save_hyperparameters()
+
+    def forward(self, g: Tensor, x: Tensor) -> Tensor:
+        return self.model(g, x)
+
+    def configure_optimizers(self):
+        return optim.Adam(self.parameters(), lr=self.lr,
+                          weight_decay=self.weight_decay)
+
+    def _forward_pass(self, batch):
+        g, x, target = batch
+        output = self.model(g, x)
+        loss = self.loss_fn(output, target)
+        acc = (output.detach().argmax(dim=1) == target).float().mean()
+        return loss, acc
+
+    def training_step(self, batch, batch_idx):
+        loss, acc = self._forward_pass(batch)
+        self.log("train_loss", loss.item(), prog_bar=False)
+        self.log("train_acc", acc.item(), prog_bar=True)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        loss, acc = self._forward_pass(batch)
+        self.log("val_loss", loss.item(), prog_bar=False)
+        self.log("val_acc", acc, prog_bar=True)
+
+    def test_step(self, batch, batch_idx, dataloader_idx=0):
+        loss, acc = self._forward_pass(batch)
+        self.log("test_loss", loss.item())
+        self.log("test_acc", acc.item())
+
+    def save(self, f: Union[Path, str]):
+        "Save only Guesser state_dict"
+        torch.save(self.model.state_dict(), f)
+
+    def load(self, f: Union[Path, str]):
+        "Loader Guesser state_dict from file"
+        self.model.load_state_dict(torch.load(f))
 
 
-def evaluation_step(guesser: Guesser, batch: Tuple):
-    guesser.eval()
-    with torch.no_grad():
-        loss, accuracy = forward_step(guesser, batch)
-    return loss.item(), accuracy
+class XVectorsForGuesser(pl.LightningDataModule):
+    def __init__(self, num_speakers: int, num_words: int,
+                 batch_size: int, iterations_per_epoch: int,
+                 data_dir: Union[Path, str] = "./data", val_size: float = 0.2,
+                 seed: Optional[int] = None):
+        super().__init__()
+        self.K = num_speakers
+        self.T = num_words
+        self.dset = timit.TimitXVectors(data_dir, val_size, seed)
+        self.batch_size = batch_size
+        self.iterations = iterations_per_epoch
 
+    def _dataloader(self, subset: str) -> Generator:
+        count = 0
+        while count < self.iterations:
+            g, target_ids, targets = self.dset.sample_games(
+                batch_size=self.batch_size,
+                subset=subset,
+                num_speakers=self.K
+            )
+            x = self.dset.sample_words(target_ids, self.T)
+            yield g, x, targets
+            count += 1
 
-def run_n_iterations(data: timit.TimitXVectors, guesser: Guesser,
-                     optimizer: optim.Optimizer, subset: str, batch_size: int,
-                     iterations: int) -> Tuple[float, float]:
-    avg_loss, avg_accuracy = 0., 0.
-    for _ in range(iterations):
-        g, target_ids, targets = data.sample_games(batch_size, subset,
-                                                   NUM_SPEAKERS)
-        x = data.sample_words(target_ids, NUM_WORDS)
-        batch = (g, x, targets)
-        if subset == "train":
-            loss, acc = training_step(guesser, batch, optimizer)
-        else:
-            loss, acc = evaluation_step(guesser, batch)
-        avg_loss += loss / iterations
-        avg_accuracy += acc / iterations
-    return avg_loss, avg_accuracy
+    def train_dataloader(self):
+        return self._dataloader("train")
+
+    def val_dataloader(self):
+        return self._dataloader("val")
+
+    def test_dataloader(self):
+        return self._dataloader("test")
 
 
 if __name__ == "__main__":
-    main()
+    cli.add_command(train)
+    cli.add_command(test)
+    cli()

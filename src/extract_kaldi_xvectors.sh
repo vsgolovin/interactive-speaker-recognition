@@ -5,6 +5,7 @@
 # * copy `kaldi/egs/sre16/v2` to a separate folder
 # * extract pretrained model (http://www.kaldi-asr.org/models/m3)
 # * add `--allow-downsample=true` option to `.../conf/mfcc.conf`
+# * copy `data/kaldi` (created by `TimitCorpus.kaldi_data_prep`) contents to `.../data`
 # * copy and execute this script
 # * copy generated files (`xvectors_*` directories) to `data/`
 
