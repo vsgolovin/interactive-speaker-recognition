@@ -51,8 +51,9 @@ class Guesser(nn.Module):
 
 class AdditiveAttention(nn.Module):
     def __init__(self, input_dim: int = 128, hidden_dim: int = 256,
-                 dropout: float = 0.1):
+                 dropout: float = 0.1, keepdim: bool = True):
         super().__init__()
+        self.keepdim = keepdim
         self.mlp = nn.Sequential(
             nn.Linear(input_dim * 2, hidden_dim),
             nn.ReLU(),
@@ -63,7 +64,7 @@ class AdditiveAttention(nn.Module):
     def forward(self, q: Tensor, k: Tensor, v: Tensor) -> Tensor:
         e = self.mlp(torch.cat([q, k], dim=-1))
         alpha = F.softmax(e, dim=-2)
-        v_hat = torch.sum(alpha * v, dim=-2, keepdim=True)
+        v_hat = torch.sum(alpha * v, dim=-2, keepdim=self.keepdim)
         return v_hat
 
 
@@ -100,26 +101,48 @@ class Enquirer(nn.Module):
         return self.mlp(torch.cat([last_output, G_hat], 1))
 
 
-if __name__ == "__main__":
-    d = 8
-    s = 5
-    bs = 2
-    enq = Enquirer(emb_dim=d, n_outputs=s)
-    g_hat = torch.randn(bs, d)
-    vocab = torch.randn((s, d))
-    print("Vocabulary:", vocab)
-
-    x = None
-    for i in range(3):
-        print(f"\nSTEP {i}")
-        print("X-vectors:", x)
-        probs = enq(g_hat, x)
-        print("Enquirer output:", probs)
-
-        inds = torch.argmax(probs, 1)
-        print("Selecting words:", inds)
-        new_words = (vocab[inds]).unsqueeze(1)
-        if x is None:
-            x = new_words
+class Verifier(nn.Module):
+    "Simple modification of `Guesser` for verification"
+    def __init__(self, emb_dim: int = 512, dropout: float = 0.5,
+                 backend: str = "mlp"):
+        "Backend should be one of `('mlp', 'cs')`"
+        super().__init__()
+        hidden_dim = emb_dim * 2
+        self.attention = AdditiveAttention(emb_dim, hidden_dim, dropout,
+                                           keepdim=False)
+        assert backend in ("mlp", "cs"), f"Unknown backend {backend}"
+        self.backend_type = backend
+        if backend == "mlp":
+            self.backend = nn.Sequential(
+                nn.Linear(hidden_dim, 2 * hidden_dim),
+                nn.ReLU(),
+                nn.Dropout(p=dropout),
+                nn.Linear(2 * hidden_dim, 1),
+                nn.Flatten(0)
+            )
         else:
-            x = torch.cat([x, new_words], 1)
+            self.backend = CosineSimilarity(dim=1)
+
+    def forward(self, g: Tensor, X: Tensor) -> Tensor:
+        # pool x-vectors with attention conditioned on g
+        T = X.size(1)
+        x_hat = self.attention(q=g.unsqueeze(1).repeat(1, T, 1), k=X, v=X)
+
+        # compare x_hat to speaker embedding
+        if self.backend_type == "mlp":
+            scores = self.backend(torch.cat([x_hat, g], dim=1))
+        else:
+            scores = self.backend(x_hat, g)
+        return torch.sigmoid(scores)
+
+
+class CosineSimilarity(nn.Module):
+    "CosineSimilarity + Linear"
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        self.cs = nn.CosineSimilarity(*args, **kwargs)
+        self.fc = nn.Linear(1, 1)
+
+    def forward(self, x1: Tensor, x2: Tensor) -> Tensor:
+        similarities = self.cs(x1, x2)
+        return self.fc(similarities.unsqueeze(1)).squeeze(1)

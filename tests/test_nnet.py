@@ -37,3 +37,15 @@ def test_enquirer(b: int, d: int, v: int, L: Union[int, None]):
     assert probs.shape == torch.Size([b, v]) and \
         torch.allclose(probs.sum(1), torch.ones(b)) and \
         torch.all((probs > 0) & (probs < 1))
+
+
+@pytest.mark.parametrize("backend", ["mlp", "cs"])
+@pytest.mark.parametrize("b,t,d", [(1, 1, 16), (16, 5, 128)])
+def test_verifier(b: int, t: int, d: int, backend: str):
+    model = nnet.Verifier(emb_dim=d, backend=backend)
+    g = torch.randn((b, d))
+    x = torch.randn((b, t, d))
+    probs = model(g, x)
+    assert probs.shape == torch.Size([b]) and \
+        torch.all(probs <= 1) and \
+        torch.all(probs >= 0)
