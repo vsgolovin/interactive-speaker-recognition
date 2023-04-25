@@ -157,7 +157,7 @@ class XVectorsForGuesser(pl.LightningDataModule):
     def _dataloader(self, subset: str) -> Generator:
         count = 0
         while count < self.iterations:
-            g, target_ids, targets = self.dset.sample_games(
+            g, target_ids, targets = self.dset.sample_isr_games(
                 batch_size=self.batch_size,
                 subset=subset,
                 num_speakers=self.K

@@ -86,7 +86,7 @@ class IsrEnvironment:
     def reset(self, subset: str = "train", batch_size: int = 32,
               num_speakers: int = 5, num_words: int = 3) -> Tensor:
         "Returns state tensor"
-        voice_prints, speaker_ids, targets = self.dset.sample_games(
+        voice_prints, speaker_ids, targets = self.dset.sample_isr_games(
             batch_size, subset, num_speakers)
         self.subset = subset
         self.batch_size = batch_size

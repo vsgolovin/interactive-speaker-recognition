@@ -344,9 +344,9 @@ class TimitXVectors:
                     np.stack([xv_words.get(key, np.zeros(self.emb_dim))
                              for key in keys]))
 
-    def sample_games(self, batch_size: int, subset: str = "train",
-                     num_speakers: int = 5
-                     ) -> Tuple[Tensor, np.ndarray, Tensor]:
+    def sample_isr_games(self, batch_size: int, subset: str = "train",
+                         num_speakers: int = 5
+                         ) -> Tuple[Tensor, np.ndarray, Tensor]:
         """
         Efficiently sample a batch of ISR games. Each game has the same amount
         of speakers.
@@ -383,6 +383,42 @@ class TimitXVectors:
         target_ids = self.speakers[subset][target_inds]
 
         return voice_prints, target_ids, targets
+
+    def sample_isv_games(self, batch_size: int, subset: str = "train"
+                         ) -> Tuple[Tensor, np.ndarray, Tensor]:
+        """
+        Efficiently sample a batch of ISV games.
+
+        Returns
+        -------
+        voice_prints : Tensor
+            Stack of speaker voice prints for every game.
+            shape (batch_size, emb_dim)
+        real_ids : np.ndarray
+            IDs (strings, i.e., "ABC0") of selected speakers.
+            shape (batch_size,)
+        targets : Tensor
+            Tensor of ones and zeros. Ones indicate matches between voice
+            prints and real speaker ids (authentic speakers), zeros indicate
+            the opposite (impostors).
+            shape (batch_size,)
+
+        """
+        # sample speakers
+        # two speakers per sample -- impostor and authentic
+        spkr_inds = torch.multinomial(
+            torch.ones((batch_size, len(self.speakers[subset]))),
+            num_samples=2
+        )
+        targets = torch.randint(0, 2, size=(batch_size,))
+        # speakers to verify (authentic)
+        ver_inds = spkr_inds[:, 1]
+        voice_prints = self.voice_prints[subset][ver_inds, :]
+        # actual speakers, use their word embeddings (impostor or authentic)
+        real_inds = spkr_inds.gather(1, targets.unsqueeze(1)).squeeze(1)
+        # their ids (strings, not integers)
+        real_ids = self.speakers[subset][real_inds]
+        return voice_prints, real_ids, targets
 
     def sample_words(self, speaker_ids: np.ndarray, num_words: int) -> Tensor:
         "Randomly sample word embeddings of selected speakers"

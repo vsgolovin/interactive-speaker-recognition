@@ -74,7 +74,7 @@ def evaluate(guesser: Guesser, dset: TimitXVectors, subset: str,
         while sampled_episodes < episodes:
             # sampling + guesser forward pass
             bs = min(num_envs, episodes - sampled_episodes)
-            g, target_ids, targets = dset.sample_games(
+            g, target_ids, targets = dset.sample_isr_games(
                 batch_size=bs,
                 subset=subset,
                 num_speakers=num_speakers
