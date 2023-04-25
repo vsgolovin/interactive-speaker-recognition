@@ -13,8 +13,11 @@ def pack_states(voice_prints: Tensor, word_embeddings: Optional[Tensor] = None,
     batch of states (stack([info, g, x])).
     """
     # inspect input
-    batch_size, num_speakers, d_emb = voice_prints.shape
-    assert d_emb >= 3
+    if voice_prints.ndim == 2:
+        batch_size, d_emb = voice_prints.shape
+        num_speakers = 1
+    else:
+        batch_size, num_speakers, d_emb = voice_prints.shape
     if word_embeddings is None:
         num_requested_words = 0
     else:
@@ -28,7 +31,10 @@ def pack_states(voice_prints: Tensor, word_embeddings: Optional[Tensor] = None,
     packed[:, 0, 1] = num_words
     packed[:, 0, 2] = num_requested_words
     j = num_speakers + 1
-    packed[:, 1:j, :] = voice_prints
+    if voice_prints.ndim == 2:
+        packed[:, 1, :] = voice_prints
+    else:
+        packed[:, 1:j, :] = voice_prints
     if num_requested_words > 0:
         packed[:, j:j + num_requested_words, :] = word_embeddings
 
@@ -46,6 +52,8 @@ def unpack_states(packed: Tensor) -> Tuple[Tensor, Tensor]:
     )
     if num_req_words == 0:
         x = None
+    if num_speakers == 1:
+        g = g.squeeze(1)
     return g, x
 
 
