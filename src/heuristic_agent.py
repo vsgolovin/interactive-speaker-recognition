@@ -1,22 +1,28 @@
+from typing import Union
 from tqdm import tqdm
 import numpy as np
 import torch
 from pytorch_lightning import seed_everything
 import click
 from isr.timit import TimitXVectors
-from isr.nnet import Guesser
+from isr.nnet import Guesser, Verifier
 from isr.simple_agents import HeuristicAgent, RandomAgent
 
 
 @click.command()
+@click.option("-V/--isv", "verification", is_flag=True, default=False,
+              help="perform speaker verification instead of default speaker " +
+              "recognition")
 @click.option("-A/--all", "all_subsets", is_flag=True, default=False)
 @click.option("--seed", type=int, default=2008, help="global seed")
 @click.option("--split-seed", type=int, default=42,
               help="seed used to perform train-val split")
 @click.option("-K", "--num-speakers", type=int, default=5,
-              help="number of speakers present in every game")
+              help="[only ISR] number of speakers present in every game")
 @click.option("-T", "--num-words", type=int, default=3,
               help="number of words asked in every game")
+@click.option("--backend", type=click.Choice(["mlp", "cs"]), default="mlp",
+              help="[only ISV] backend to use for speaker verification")
 @click.option("--num-envs", "--batch-size", type=int, default=200,
               help="number of ISR environments (games) to run in parallel")
 @click.option("--episodes", "--test-games", type=int, default=20000,
@@ -30,19 +36,25 @@ from isr.simple_agents import HeuristicAgent, RandomAgent
 @click.option("--temperature", type=float, default=0.05,
               help="softmax temperature for converting scores into " +
               "probabilities")
-def main(all_subsets: bool, seed: int, split_seed: int, num_speakers: int,
-         num_words: int, num_envs: int, episodes: int, random_agent: bool,
-         agent_num_words: int, nonuniform: bool, temperature: float):
+def main(verification: bool, all_subsets: bool, seed: int, split_seed: int,
+         num_speakers: int, num_words: int, backend: str, num_envs: int,
+         episodes: int, random_agent: bool, agent_num_words: int,
+         nonuniform: bool, temperature: float):
     # load dataset and guesser
     seed_everything(seed)
     dset = TimitXVectors(seed=split_seed)
-    guesser = Guesser(emb_dim=512)
-    guesser.load_state_dict(torch.load("models/guesser.pth",
-                                       map_location="cpu"))
+    if verification:
+        model = Verifier(emb_dim=512, backend=backend)
+        model.load_state_dict(torch.load("models/verifier.pth",
+                                         map_location="cpu"))
+    else:
+        model = Guesser(emb_dim=512)
+        model.load_state_dict(torch.load("models/guesser.pth",
+                                         map_location="cpu"))
 
     # read word scores
     if random_agent:
-        agent = RandomAgent(20)
+        agent = RandomAgent(total_words=len(dset.words))
     else:
         word_scores = read_word_scores("models/word-acc_val.csv")
         agent = HeuristicAgent(
@@ -57,7 +69,7 @@ def main(all_subsets: bool, seed: int, split_seed: int, num_speakers: int,
     if all_subsets:
         subsets = ["train", "val"] + subsets
     for subset in subsets:
-        acc = evaluate(guesser, dset, agent, subset, num_speakers, num_words,
+        acc = evaluate(model, dset, agent, subset, num_speakers, num_words,
                        num_envs, episodes)
         print(f"Accuracy on {subset}: {acc}")
 
@@ -71,28 +83,29 @@ def read_word_scores(path: str):
     return np.array(scores, dtype=float)
 
 
-def evaluate(guesser, dset, agent, subset, num_speakers, num_words, num_envs,
-             episodes):
+def evaluate(model: Union[Guesser, Verifier], dset: TimitXVectors,
+             agent: Union[HeuristicAgent, RandomAgent], subset: str,
+             num_speakers: int, num_words: int, num_envs: int, episodes: int):
+    is_isr = isinstance(model, Guesser)
     sampled_episodes = 0
     accuracy = 0.0
-    guesser.eval()
+    model.eval()
     with tqdm(total=episodes) as pbar:
         while sampled_episodes < episodes:
             bs = min(num_envs, episodes - sampled_episodes)
-            g, target_ids, targets = dset.sample_games(
-                batch_size=bs,
-                subset=subset,
-                num_speakers=num_speakers
-            )
+            if is_isr:
+                g, speaker_ids, targets = dset.sample_isr_games(
+                    bs, subset, num_speakers)
+            else:
+                g, speaker_ids, targets = dset.sample_isv_games(bs, subset)
             word_inds = agent.sample(num_envs, num_words)
-            x = torch.stack(
-                [dset.word_vectors[spkr][inds]
-                 for spkr, inds in zip(target_ids, word_inds)],
-                dim=0
-            )
+            x = dset.get_word_embeddings(speaker_ids, word_inds)
             with torch.no_grad():
-                probs = guesser.forward(g, x)
-                predictions = probs.argmax(dim=1)
+                output = model.forward(g, x)
+                if is_isr:
+                    predictions = output.argmax(dim=1)
+                else:
+                    predictions = output.round().long()
                 acc = (predictions == targets).float().mean().item()
             accuracy += acc * bs / episodes
 
