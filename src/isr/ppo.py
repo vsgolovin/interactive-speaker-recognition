@@ -5,7 +5,7 @@ import torch
 from torch import nn, Tensor
 from torch.optim import Adam
 from torch.nn import functional as F
-from isr.envtools import unpack_states
+from isr.envtools import unpack_states, g_to_g_hat
 from isr.nnet import Enquirer
 
 
@@ -90,7 +90,7 @@ class Actor(nn.Module):
 
     def forward(self, states: Tensor) -> Tensor:
         g, x = unpack_states(states)
-        g_hat = torch.mean(g, dim=1)
+        g_hat = g_to_g_hat(g)
         return self.model(g_hat, x)
 
     @torch.no_grad()
@@ -118,7 +118,7 @@ class Actor(nn.Module):
         and entropy of every action distribution
         """
         g, x = unpack_states(states)
-        g_hat = torch.mean(g, dim=1)
+        g_hat = g_to_g_hat(g)
         probs_full = torch.softmax(self.model(g_hat, x), 1)
         entropy = -torch.sum(probs_full * torch.log(probs_full), 1)
         probs = probs_full.gather(1, actions.view(-1, 1))
@@ -132,7 +132,7 @@ class Critic(nn.Module):
 
     def forward(self, states: Tensor) -> Tensor:
         g, x = unpack_states(states)
-        g_hat = torch.mean(g, dim=1)
+        g_hat = g_to_g_hat(g)
         return self.model(g_hat, x)
 
 
