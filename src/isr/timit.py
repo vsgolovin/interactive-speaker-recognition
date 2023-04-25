@@ -420,22 +420,10 @@ class TimitXVectors:
         real_ids = self.speakers[subset][real_inds]
         return voice_prints, real_ids, targets
 
-    def sample_words(self, speaker_ids: np.ndarray, num_words: int) -> Tensor:
-        "Randomly sample word embeddings of selected speakers"
-        b = speaker_ids.shape[0]
-        n = len(self.words)
-        word_inds = torch.multinomial(
-            torch.ones(n).repeat((b, 1)),
-            num_samples=num_words)
-        return torch.stack(
-            [self.word_vectors[spkr][inds]
-             for spkr, inds in zip(speaker_ids, word_inds)],
-            dim=0)
-
     def get_word_embeddings(self, speaker_ids: np.ndarray,
                             word_inds: Tensor) -> Tensor:
         # TODO: store word embeddings differently to avoid using listcomp
         return torch.stack(
-            [self.word_vectors[spkr][wrd.item()]
-             for spkr, wrd in zip(speaker_ids, word_inds)],
+            [self.word_vectors[spkr][words]
+             for spkr, words in zip(speaker_ids, word_inds)],
             dim=0)

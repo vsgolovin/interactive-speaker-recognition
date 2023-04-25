@@ -17,6 +17,7 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from isr.nnet import Guesser
 from isr import timit
+from isr.simple_agents import RandomAgent
 
 
 @click.group()
@@ -153,6 +154,7 @@ class XVectorsForGuesser(pl.LightningDataModule):
         self.dset = timit.TimitXVectors(data_dir, val_size, seed)
         self.batch_size = batch_size
         self.iterations = iterations_per_epoch
+        self.agent = RandomAgent(total_words=len(self.dset.words))
 
     def _dataloader(self, subset: str) -> Generator:
         count = 0
@@ -162,7 +164,9 @@ class XVectorsForGuesser(pl.LightningDataModule):
                 subset=subset,
                 num_speakers=self.K
             )
-            x = self.dset.sample_words(target_ids, self.T)
+            word_inds = self.agent.sample(num_envs=self.batch_size,
+                                          num_words=self.T)
+            x = self.dset.get_word_embeddings(target_ids, word_inds)
             yield g, x, targets
             count += 1
 
