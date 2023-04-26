@@ -17,6 +17,8 @@ from isr.simple_agents import HeuristicAgent, RandomAgent
 @click.option("--seed", type=int, default=2008, help="global seed")
 @click.option("--split-seed", type=int, default=42,
               help="seed used to perform train-val split")
+@click.option("--wscore-file", type=click.Path(),
+              default="./models/word_scores.csv", help="file with word scores")
 @click.option("-K", "--num-speakers", type=int, default=5,
               help="[only ISR] number of speakers present in every game")
 @click.option("-T", "--num-words", type=int, default=3,
@@ -37,9 +39,9 @@ from isr.simple_agents import HeuristicAgent, RandomAgent
               help="softmax temperature for converting scores into " +
               "probabilities")
 def main(verification: bool, all_subsets: bool, seed: int, split_seed: int,
-         num_speakers: int, num_words: int, backend: str, num_envs: int,
-         episodes: int, random_agent: bool, agent_num_words: int,
-         nonuniform: bool, temperature: float):
+         wscore_file: str, num_speakers: int, num_words: int, backend: str,
+         num_envs: int, episodes: int, random_agent: bool,
+         agent_num_words: int, nonuniform: bool, temperature: float):
     # load dataset and guesser
     seed_everything(seed)
     dset = TimitXVectors(seed=split_seed)
@@ -56,7 +58,7 @@ def main(verification: bool, all_subsets: bool, seed: int, split_seed: int,
     if random_agent:
         agent = RandomAgent(total_words=len(dset.words))
     else:
-        word_scores = read_word_scores("models/word-acc_val.csv")
+        word_scores = read_word_scores(wscore_file)
         agent = HeuristicAgent(
             word_scores,
             k=agent_num_words,

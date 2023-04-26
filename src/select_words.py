@@ -6,6 +6,7 @@ words are chosen randomly.
 """
 
 
+from typing import Union
 from tqdm import tqdm
 from matplotlib import pyplot as plt
 import numpy as np
@@ -13,28 +14,39 @@ import torch
 from pytorch_lightning import seed_everything
 import click
 from isr.timit import TimitXVectors, read_words_txt
-from isr.nnet import Guesser
+from isr.nnet import Guesser, Verifier
+from isr.simple_agents import RandomAgent
 
 
 @click.command()
+@click.option("-V/--isv", "verification", is_flag=True, default=False,
+              help="perform speaker verification instead of default speaker " +
+              "recognition")
 @click.option("--seed", type=int, default=2008, help="global seed")
 @click.option("--split-seed", type=int, default=42,
               help="seed used to perform train-val split")
 @click.option("-K", "--num-speakers", type=int, default=5,
-              help="number of speakers present in every game")
+              help="[only ISR] number of speakers present in every game")
 @click.option("-T", "--num-words", type=int, default=3,
               help="number of words asked in every game")
+@click.option("--backend", type=click.Choice(["mlp", "cs"]), default="mlp",
+              help="[only ISV] backend to use for speaker verification")
 @click.option("--num-envs", "--batch-size", type=int, default=200,
-              help="number of ISR environments (games) to run in parallel")
+              help="number of environments (games) to run in parallel")
 @click.option("--episodes", "--test-games", type=int, default=20000,
               help="total number of episodes (games) to run")
-def main(seed: int, split_seed: int, num_speakers: int, num_words: int,
-         num_envs: int, episodes: int):
+def main(verification: bool, seed: int, split_seed: int, num_speakers: int,
+         num_words: int, backend: str, num_envs: int, episodes: int):
     seed_everything(seed)
     dset = TimitXVectors(seed=split_seed)
-    guesser = Guesser(emb_dim=512)
-    guesser.load_state_dict(torch.load("models/guesser.pth",
-                                       map_location="cpu"))
+    if verification:
+        model = Verifier(emb_dim=512, backend=backend)
+        model.load_state_dict(torch.load("models/verifier.pth",
+                                         map_location="cpu"))
+    else:
+        model = Guesser(emb_dim=512)
+        model.load_state_dict(torch.load("models/guesser.pth",
+                                         map_location="cpu"))
 
     # read file with words
     word_dict = read_words_txt("data/words/WORDS.TXT")
@@ -45,52 +57,50 @@ def main(seed: int, split_seed: int, num_speakers: int, num_words: int,
     # evaluate guesser on train and val subsets
     fig, [ax1, ax2] = plt.subplots(nrows=2, sharex=True)
     for subset, ax in zip(["train", "val"], [ax1, ax2]):
-        word_acc = evaluate(guesser, dset, subset, num_speakers, num_words,
+        word_acc = evaluate(model, dset, subset, num_speakers, num_words,
                             num_envs, episodes)
         acc_dict = dict(zip(word_ids, word_acc))
-        save_accuracies(acc_dict, f"output/word-acc_{subset}.csv")
+        save_scores(acc_dict, f"output/word_scores_{subset}.csv")
         bar_plot(word_acc, ax, ylabel=f"{subset} accuracy")
     ax2.set_xticks(np.arange(V))
     ax2.set_xticklabels([word_dict[wid] for wid in word_ids],
                         rotation="vertical")
     fig.subplots_adjust(bottom=0.2)
-    fig.savefig("output/word-acc.png", dpi=75)
+    fig.savefig("output/word_scores.png", dpi=75)
 
 
-def evaluate(guesser: Guesser, dset: TimitXVectors, subset: str,
-             num_speakers: int, num_words: int, num_envs: int,
-             episodes: int) -> np.ndarray:
-    # arrays for storing results
+def evaluate(model: Union[Guesser, Verifier], dset: TimitXVectors, subset: str,
+             num_speakers: int, num_words: int, num_envs: int, episodes: int
+             ) -> np.ndarray:
+    is_isr = isinstance(model, Guesser)
     VOCAB_SIZE = len(dset.words)
     # how many times every word was used
     words_used_count = np.zeros(VOCAB_SIZE, dtype=np.int_)
     # how many times word was used in a successful game
     words_success_count = np.zeros_like(words_used_count)
+    # random word sampling / torch.multinomial wrapper
+    rand_agent = RandomAgent(total_words=VOCAB_SIZE)
 
-    # test guesser on `episodes` games
+    # test model on `episodes` games
     sampled_episodes = 0
-    guesser.eval()
+    model.eval()
     with tqdm(total=episodes) as pbar:
         while sampled_episodes < episodes:
-            # sampling + guesser forward pass
+            # sampling + model forward pass
             bs = min(num_envs, episodes - sampled_episodes)
-            g, target_ids, targets = dset.sample_isr_games(
-                batch_size=bs,
-                subset=subset,
-                num_speakers=num_speakers
-            )
-            word_inds = torch.multinomial(
-                torch.ones(VOCAB_SIZE).repeat((bs, 1)),
-                num_samples=num_words
-            )
-            x = torch.stack(
-                [dset.word_vectors[spkr][inds]
-                 for spkr, inds in zip(target_ids, word_inds)],
-                dim=0
-            )
+            if is_isr:
+                g, speaker_ids, targets = dset.sample_isr_games(
+                    bs, subset, num_speakers)
+            else:
+                g, speaker_ids, targets = dset.sample_isv_games(bs, subset)
+            word_inds = rand_agent.sample(bs, num_words)
+            x = dset.get_word_embeddings(speaker_ids, word_inds)
             with torch.no_grad():
-                probs = guesser.forward(g, x)
-                predictions = probs.argmax(dim=1)
+                output = model.forward(g, x)
+                if is_isr:
+                    predictions = output.argmax(dim=1)
+                else:
+                    predictions = output.round().long()
                 correct = (predictions == targets).numpy()
 
             # counting words and successes
@@ -106,7 +116,7 @@ def evaluate(guesser: Guesser, dset: TimitXVectors, subset: str,
     return words_success_count / words_used_count  # ~accuracy
 
 
-def save_accuracies(data: dict, file: str):
+def save_scores(data: dict, file: str):
     with open(file, "w") as fout:
         for k, v in data.items():
             fout.write(f"{k},{v}\n")
