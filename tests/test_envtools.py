@@ -46,10 +46,60 @@ def test_packing():
     assert torch.allclose(output, ans)
 
 
-@pytest.mark.parametrize("b,K,d", [(1, 3, 10), (8, 5, 64)])
+def test_packing_for_verifier():
+    g = torch.tensor([
+        [0., 1., 2.],
+        [-1., 0.5, -1.5],
+        [1.2, 0, -0.5]
+    ])
+    x = torch.tensor([
+        [
+            [-1., 1., -1],
+            [-3., 1., 2.]
+        ],
+        [
+            [2., 0., 2],
+            [.4, 1., -.9]
+        ],
+        [
+            [1., 0.5, 1.],
+            [1.1, -.2, -.5]
+        ]
+    ])
+    output = envtools.pack_states(g, x, 3)
+    ans = torch.tensor([
+        [
+            [1., 3., 2.],
+            [0., 1., 2.],
+            [-1., 1., -1],
+            [-3., 1., 2.],
+            [0., 0., 0.]
+        ],
+        [
+            [1., 3., 2.],
+            [-1., 0.5, -1.5],
+            [2., 0., 2],
+            [.4, 1., -.9],
+            [0., 0., 0.]
+        ],
+        [
+            [1., 3., 2.],
+            [1.2, 0, -0.5],
+            [1., 0.5, 1.],
+            [1.1, -.2, -.5],
+            [0., 0., 0.]
+        ]
+    ])
+    assert torch.allclose(output, ans)
+
+
+@pytest.mark.parametrize("b,K,d", [(3, 1, 6), (1, 3, 10), (8, 5, 64)])
 @pytest.mark.parametrize("T,t", [(3, 0), (3, 1), (3, 3), (5, 4)])
 def test_pack_unpack(b: int, K: int, T: int, t: int, d: int):
-    g = torch.randn((b, K, d))
+    if K > 1:
+        g = torch.randn((b, K, d))
+    else:
+        g = torch.randn((b, d))
     x = torch.randn((b, t, d)) if t > 0 else None
     packed = envtools.pack_states(g, x, T)
     g_out, x_out = envtools.unpack_states(packed)
