@@ -2,6 +2,7 @@ from typing import Optional
 import torch
 from torch import nn, Tensor
 from torch.nn import functional as F
+from isr import utils
 
 
 class Guesser(nn.Module):
@@ -133,16 +134,9 @@ class CodebookLookup(nn.Module):
                                   requires_grad=False)
 
     def forward(self, x: Tensor) -> Tensor:
-        distances = pairwise_l2_distances(x, self.codebook)
+        distances = utils.pairwise_l2_distances(x, self.codebook)
         # chi2(df=d) if x and codebook are randn
         return (distances - self.mu) / self.sigma
-
-
-def pairwise_l2_distances(x1: Tensor, x2: Tensor):
-    assert x1.ndim == 2 and x2.ndim == 2 and x1.size(1) == x2.size(1)
-    x1_stack = torch.stack([x1] * x2.size(0), dim=1)
-    x2_stack = torch.stack([x2] * x1.size(0), dim=0)
-    return ((x1_stack - x2_stack)**2).sum(2).sqrt()
 
 
 class Verifier(nn.Module):

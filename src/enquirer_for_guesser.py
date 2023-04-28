@@ -170,7 +170,6 @@ def test(use_codebook: bool, all_subsets: bool, sd_file: str, seed: int,
     subsets = ["test"]
     if all_subsets:
         subsets = ["train", "val"] + subsets
-    print(ppo.actor)
     for subset in subsets:
         r = evaluate(ppo, env, subset, num_speakers, num_words,
                      episodes, num_envs, True)
