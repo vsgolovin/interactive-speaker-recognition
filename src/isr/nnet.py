@@ -101,6 +101,50 @@ class Enquirer(nn.Module):
         return self.mlp(torch.cat([last_output, G_hat], 1))
 
 
+class CodebookEnquirer(Enquirer):  # TODO: think of a better name
+    def __init__(self, codebook: Tensor, emb_dim: int = 512):
+        super().__init__(emb_dim=emb_dim, n_outputs=emb_dim)
+        self.mlp.pop(-1)  # remove softmax
+        self.cblookup = CodebookLookup(codebook, d=emb_dim)
+        self.softmax = nn.Softmax(dim=1)
+
+    def forward(self, g: Tensor, x: Tensor) -> Tensor:
+        word_emb = super().forward(g, x)
+        # transformed distances to codebook vectors
+        distances = self.cblookup(word_emb)
+        return self.softmax(-distances)
+
+
+class CodebookLookup(nn.Module):
+    def __init__(self, codebook: Tensor, d: int = 512):
+        """
+        Finds `d`-dimensional vectors closest to `codebook` rows.
+        """
+        super().__init__()
+        assert codebook.ndim == 2 and codebook.size(1) == d
+        self.cb_size = codebook.size(0)
+        self.vec_dim = d
+        self.codebook = nn.Parameter(
+            data=torch.randn((self.cb_size, self.vec_dim)),
+            requires_grad=False
+        )
+        self.mu = nn.Parameter(torch.tensor(d**.5), requires_grad=False)
+        self.sigma = nn.Parameter(torch.tensor((2 * d)**.5),
+                                  requires_grad=False)
+
+    def forward(self, x: Tensor) -> Tensor:
+        distances = pairwise_l2_distances(x, self.codebook)
+        # chi2(df=d) if x and codebook are randn
+        return (distances - self.mu) / self.sigma
+
+
+def pairwise_l2_distances(x1: Tensor, x2: Tensor):
+    assert x1.ndim == 2 and x2.ndim == 2 and x1.size(1) == x2.size(1)
+    x1_stack = torch.stack([x1] * x2.size(0), dim=1)
+    x2_stack = torch.stack([x2] * x1.size(0), dim=0)
+    return ((x1_stack - x2_stack)**2).sum(2).sqrt()
+
+
 class Verifier(nn.Module):
     "Simple modification of `Guesser` for verification"
     def __init__(self, emb_dim: int = 512, dropout: float = 0.5,

@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import torch
 from torch.utils.tensorboard import SummaryWriter
 from pytorch_lightning import seed_everything
-from isr.nnet import Verifier
+from isr.nnet import Verifier, Enquirer, CodebookEnquirer
 from isr.envtools import IsvEnvironment
 from isr import timit
 from isr.ppo import Buffer, PPO
@@ -19,6 +19,8 @@ def cli():
 
 
 @cli.command()
+@click.option("-C/--codebook", "use_codebook", is_flag=True, default=False,
+              help="use CodebookEnquirer instead of regular Enquirer")
 @click.option("--seed", type=int, default=2008, help="global seed")
 @click.option("--split-seed", type=int, default=42,
               help="seed used to perform train-val split")
@@ -47,13 +49,14 @@ def cli():
               help="PPO entropy penalty coefficient")
 @click.option("--grad-clip", type=float, default=1.0,
               help="PPO gradient clipping")
-def train(seed: int, split_seed: int, num_words: int, backend: str,
-          num_envs: int, episodes_per_update: int, eval_period: int,
-          num_updates: int, batch_size: int, epochs_per_update: int,
-          lr_actor: float, lr_critic: float, ppo_clip: float, entropy: float,
-          grad_clip: float):
+def train(use_codebook: bool, seed: int, split_seed: int, num_words: int,
+          backend: str, num_envs: int, episodes_per_update: int,
+          eval_period: int, num_updates: int, batch_size: int,
+          epochs_per_update: int, lr_actor: float, lr_critic: float,
+          ppo_clip: float, entropy: float, grad_clip: float):
     seed_everything(seed)
     hparams = locals()
+    EMB_DIM = 512
     output_dir = Path("output")
     dset = timit.TimitXVectors(seed=split_seed)
     verifier = Verifier(emb_dim=512, backend=backend)
@@ -61,9 +64,14 @@ def train(seed: int, split_seed: int, num_words: int, backend: str,
                                         map_location="cpu"))
     env = IsvEnvironment(dset, verifier)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    ppo = PPO(512, len(dset.words), device=device, lr_actor=lr_actor,
-              lr_critic=lr_critic, ppo_clip=ppo_clip, entropy=entropy,
-              grad_clip=None if grad_clip == 0 else grad_clip)
+    if use_codebook:
+        codebook = torch.randn((len(dset.words), EMB_DIM))
+        enquirer = CodebookEnquirer(codebook, EMB_DIM)
+    else:
+        enquirer = Enquirer(emb_dim=EMB_DIM, n_outputs=len(dset.words))
+    ppo = PPO(enquirer, EMB_DIM, len(dset.words), device=device,
+              lr_actor=lr_actor, lr_critic=lr_critic, ppo_clip=ppo_clip,
+              entropy=entropy, grad_clip=None if grad_clip == 0 else grad_clip)
     buffer = Buffer(num_words=num_words)
 
     # tensorboard logger
@@ -125,6 +133,8 @@ def train(seed: int, split_seed: int, num_words: int, backend: str,
 
 
 @cli.command()
+@click.option("-C/--codebook", "use_codebook", is_flag=True, default=False,
+              help="use CodebookEnquirer instead of regular Enquirer")
 @click.option("-A/--all", "all_subsets", is_flag=True, default=False)
 @click.option("--sd-file", type=click.Path(), default="./output/actor.pth",
               help="path to file with guesser state_dict")
@@ -139,15 +149,21 @@ def train(seed: int, split_seed: int, num_words: int, backend: str,
               help="number of ISR environments (games) to run in parallel")
 @click.option("--episodes", "--test-games", type=int, default=20000,
               help="total number of episodes (games) to run")
-def test(all_subsets: bool, sd_file: str, seed: int, split_seed: int,
-         num_words: int, backend: str, num_envs: int, episodes: int):
+def test(use_codebook: bool, all_subsets: bool, sd_file: str, seed: int,
+         split_seed: int, num_words: int, backend: str, num_envs: int,
+         episodes: int):
     seed_everything(seed)
     dset = timit.TimitXVectors(seed=split_seed)
     verifier = Verifier(emb_dim=512, backend=backend)
     verifier.load_state_dict(torch.load("models/verifier.pth",
                                         map_location="cpu"))
     env = IsvEnvironment(dset, verifier)
-    ppo = PPO(512, len(dset.words), device=torch.device("cpu"))
+    if use_codebook:
+        codebook = torch.zeros((len(dset.words), 512))
+        enquirer = CodebookEnquirer(codebook, 512)
+    else:
+        enquirer = Enquirer(512, len(dset.words))
+    ppo = PPO(enquirer, 512, len(dset.words), device=torch.device("cpu"))
     ppo.actor.load_state_dict(torch.load(sd_file))
 
     subsets = ["test"]

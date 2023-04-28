@@ -6,7 +6,7 @@ from torch import nn, Tensor
 from torch.optim import Adam
 from torch.nn import functional as F
 from isr.envtools import unpack_states, g_to_g_hat
-from isr.nnet import Enquirer
+from isr.nnet import Enquirer, CodebookEnquirer
 
 
 class Buffer:
@@ -83,10 +83,12 @@ class Buffer:
 
 
 class Actor(nn.Module):
-    def __init__(self, input_size: int, num_actions: int):
+    def __init__(self, model: Union[Enquirer, CodebookEnquirer],
+                 input_size: int, num_actions: int):
         super().__init__()
+        self.input_size = input_size
         self.num_actions = num_actions
-        self.model = Enquirer(emb_dim=input_size, n_outputs=num_actions)
+        self.model = model
 
     def forward(self, states: Tensor) -> Tensor:
         g, x = unpack_states(states)
@@ -138,7 +140,8 @@ class Critic(nn.Module):
 
 class PPO:
     "Proximal Policy Optimization with clipping"
-    def __init__(self, input_size: int, num_actions: int,
+    def __init__(self, enquirer: Union[Enquirer, CodebookEnquirer],
+                 input_size: int, num_actions: int,
                  device: Union[torch.device, str], lr_actor: float = 1e-4,
                  lr_critic: float = 1e-4, ppo_clip: float = 0.2,
                  grad_clip: Optional[float] = 1.0,
@@ -146,7 +149,7 @@ class PPO:
         if isinstance(device, str):
             device = torch.device(device)
         self.device = device
-        self.actor = Actor(input_size, num_actions).to(self.device)
+        self.actor = Actor(enquirer, input_size, num_actions).to(self.device)
         self.critic = Critic(input_size).to(self.device)
         self.actor_optim = Adam(self.actor.parameters(), lr=lr_actor)
         self.critic_optim = Adam(self.critic.parameters(), lr=lr_critic)
