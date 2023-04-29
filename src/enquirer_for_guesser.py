@@ -65,7 +65,7 @@ def train(use_codebook: bool, seed: int, split_seed: int, num_speakers: int,
     env = IsrEnvironment(dset, guesser)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if use_codebook:
-        codebook = torch.randn((len(dset.words), EMB_DIM))
+        codebook = dset.create_codebook("train", normalize=True)
         enquirer = CodebookEnquirer(codebook, EMB_DIM)
     else:
         enquirer = Enquirer(emb_dim=EMB_DIM, n_outputs=len(dset.words))
