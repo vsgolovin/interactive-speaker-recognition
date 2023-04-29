@@ -294,6 +294,7 @@ class TimitXVectors:
         # common words: word_id -> word; sorted ids
         self.words = read_words_txt(data_dir / "words/WORDS.TXT")
         self.word_ids = tuple(sorted(self.words.keys()))
+        self.vocab_size = len(self.words)
 
         # split speakers into subsets
         if seed is not None:
