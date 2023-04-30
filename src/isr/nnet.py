@@ -102,41 +102,23 @@ class Enquirer(nn.Module):
         return self.mlp(torch.cat([last_output, G_hat], 1))
 
 
-class CodebookEnquirer(Enquirer):  # TODO: think of a better name
+class CodebookEnquirer(Enquirer):
     def __init__(self, codebook: Tensor, emb_dim: int = 512):
         super().__init__(emb_dim=emb_dim, n_outputs=emb_dim)
         self.mlp.pop(-1)  # remove softmax
-        self.cblookup = CodebookLookup(codebook, d=emb_dim)
+        self.register_buffer("codebook", codebook, persistent=False)
         self.softmax = nn.Softmax(dim=1)
+        self.t_coeff = nn.Parameter(torch.tensor(1e-4), requires_grad=True)
+
+    @property
+    def temperature(self):
+        return torch.exp(self.t_coeff)
 
     def forward(self, g: Tensor, x: Tensor) -> Tensor:
         word_emb = super().forward(g, x)
         # transformed distances to codebook vectors
-        distances = self.cblookup(word_emb)
-        return self.softmax(-distances)
-
-
-class CodebookLookup(nn.Module):
-    def __init__(self, codebook: Tensor, d: int = 512):
-        """
-        Finds `d`-dimensional vectors closest to `codebook` rows.
-        """
-        super().__init__()
-        assert codebook.ndim == 2 and codebook.size(1) == d
-        self.cb_size = codebook.size(0)
-        self.vec_dim = d
-        self.codebook = nn.Parameter(
-            data=torch.randn((self.cb_size, self.vec_dim)),
-            requires_grad=False
-        )
-        self.mu = nn.Parameter(torch.tensor(d**.5), requires_grad=False)
-        self.sigma = nn.Parameter(torch.tensor((2 * d)**.5),
-                                  requires_grad=False)
-
-    def forward(self, x: Tensor) -> Tensor:
-        distances = utils.pairwise_l2_distances(x, self.codebook)
-        # chi2(df=d) if x and codebook are randn
-        return (distances - self.mu) / self.sigma
+        distances = utils.pairwise_mse(word_emb, self.codebook)
+        return self.softmax(-distances / self.temperature)
 
 
 class Verifier(nn.Module):

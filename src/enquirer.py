@@ -76,7 +76,7 @@ def train(use_codebook: bool, verification: bool, seed: int, split_seed: int,
         env = IsrEnvironment(dset, guesser)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if use_codebook:
-        codebook = dset.create_codebook("train", normalize=True)
+        codebook = dset.create_codebook("train", normalize=False)
         enquirer = CodebookEnquirer(codebook, emb_dim=dset.emb_dim)
     else:
         enquirer = Enquirer(emb_dim=dset.emb_dim, n_outputs=dset.vocab_size)
@@ -114,6 +114,11 @@ def train(use_codebook: bool, verification: bool, seed: int, split_seed: int,
                 episode_count += num_envs
                 writer.add_scalar("reward/train", rewards.mean().item(),
                                   global_step=episode_count)
+                writer.add_scalar(
+                    "temperature",
+                    ppo.actor.model.t_coeff.exp().item(),
+                    global_step=episode_count
+                )
             losses = ppo.update(buffer, batch_size, epochs_per_update)
             buffer.empty()
             for k, v in losses.items():
@@ -184,7 +189,7 @@ def test(use_codebook: bool, verification: bool, all_subsets: bool,
                                            map_location="cpu"))
         env = IsrEnvironment(dset, guesser)
     if use_codebook:
-        codebook = torch.zeros((len(dset.words), 512))
+        codebook = dset.create_codebook("train", normalize=False)
         enquirer = CodebookEnquirer(codebook, 512)
     else:
         enquirer = Enquirer(512, len(dset.words))
