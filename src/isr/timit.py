@@ -429,15 +429,8 @@ class TimitXVectors:
              for spkr, words in zip(speaker_ids, word_inds)],
             dim=0)
 
-    def create_codebook(self, subset: str = "train",
-                        word_inds: Optional[Tensor] = None,
-                        normalize: bool = False) -> Tensor:
-        V = len(self.words)
-        if word_inds is None:
-            word_inds = torch.arange(V)
-        wv_stack = torch.stack([self.word_vectors[spkr][word_inds]
+    def create_codebook(self, subset: str = "train") -> Tensor:
+        wv_stack = torch.stack([self.word_vectors[spkr]
                                 for spkr in self.speakers[subset]])
         codebook = wv_stack.mean(0)
-        if normalize:
-            codebook = (codebook - codebook.mean()) / codebook.std()
         return codebook

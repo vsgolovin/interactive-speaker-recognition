@@ -31,11 +31,11 @@ class Buffer:
             self.batch_size = states.size(0)
         for t in (states, actions, probs, rewards, values):
             assert t.size(0) == self.batch_size
-        self.states.append(states.clone().cpu())
-        self.actions.append(actions.clone().cpu())
-        self.probs.append(probs.clone().cpu())
-        self.rewards.append(rewards.clone().cpu())
-        self.values.append(values.clone().cpu())
+        self.states.append(states.detach().cpu())
+        self.actions.append(actions.detach().cpu())
+        self.probs.append(probs.detach().cpu())
+        self.rewards.append(rewards.detach().cpu())
+        self.values.append(values.detach().cpu())
 
     def construct_tensors(self):
         # list -> tensor
@@ -83,11 +83,8 @@ class Buffer:
 
 
 class Actor(nn.Module):
-    def __init__(self, model: Union[Enquirer, CodebookEnquirer],
-                 input_size: int, num_actions: int):
+    def __init__(self, model: Union[Enquirer, CodebookEnquirer]):
         super().__init__()
-        self.input_size = input_size
-        self.num_actions = num_actions
         self.model = model
 
     def forward(self, states: Tensor) -> Tensor:
@@ -141,15 +138,14 @@ class Critic(nn.Module):
 class PPO:
     "Proximal Policy Optimization with clipping"
     def __init__(self, enquirer: Union[Enquirer, CodebookEnquirer],
-                 input_size: int, num_actions: int,
-                 device: Union[torch.device, str], lr_actor: float = 1e-4,
-                 lr_critic: float = 1e-4, ppo_clip: float = 0.2,
-                 grad_clip: Optional[float] = 1.0,
+                 input_size: int,  device: Union[torch.device, str],
+                 lr_actor: float = 1e-4, lr_critic: float = 1e-4,
+                 ppo_clip: float = 0.2, grad_clip: Optional[float] = 1.0,
                  entropy: Optional[float] = 0.01):
         if isinstance(device, str):
             device = torch.device(device)
         self.device = device
-        self.actor = Actor(enquirer, input_size, num_actions).to(self.device)
+        self.actor = Actor(enquirer).to(self.device)
         self.critic = Critic(input_size).to(self.device)
         self.actor_optim = Adam(self.actor.parameters(), lr=lr_actor)
         self.critic_optim = Adam(self.critic.parameters(), lr=lr_critic)
@@ -233,5 +229,5 @@ class PPO:
 
     def save(self, output_dir: Union[Path, str]):
         path = Path(output_dir)
-        torch.save(self.actor.state_dict(), path / "actor.pth")
-        torch.save(self.critic.state_dict(), path / "critic.pth")
+        torch.save(self.actor.model.state_dict(), path / "actor.pth")
+        torch.save(self.critic.model.state_dict(), path / "critic.pth")

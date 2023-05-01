@@ -42,8 +42,7 @@ def test_enquirer(b: int, d: int, v: int, L: Union[int, None]):
 @pytest.mark.parametrize("L", (0, 1, 3))
 @pytest.mark.parametrize("b,d,v", [(1, 16, 3), (16, 128, 20)])
 def test_codebook_enquirer(b: int, d: int, v: int, L: Union[int, None]):
-    codebook = torch.randn((v, d))
-    enq = nnet.CodebookEnquirer(codebook, emb_dim=d)
+    enq = nnet.CodebookEnquirer(v, d)
     g_hat = torch.randn((b, d))
     x = torch.randn((b, L, d)) if L > 0 else None
     probs = enq(g_hat, x)
