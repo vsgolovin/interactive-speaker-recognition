@@ -157,8 +157,7 @@ class XVectorsForGuesser(pl.LightningDataModule):
         self.agent = RandomAgent(total_words=len(self.dset.words))
 
     def _dataloader(self, subset: str) -> Generator:
-        count = 0
-        while count < self.iterations:
+        for _ in range(self.iterations):
             g, target_ids, targets = self.dset.sample_isr_games(
                 batch_size=self.batch_size,
                 subset=subset,
@@ -168,7 +167,6 @@ class XVectorsForGuesser(pl.LightningDataModule):
                                           num_words=self.T)
             x = self.dset.get_word_embeddings(target_ids, word_inds)
             yield g, x, targets
-            count += 1
 
     def train_dataloader(self):
         return self._dataloader("train")
@@ -181,6 +179,4 @@ class XVectorsForGuesser(pl.LightningDataModule):
 
 
 if __name__ == "__main__":
-    cli.add_command(train)
-    cli.add_command(test)
     cli()

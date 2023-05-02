@@ -269,6 +269,4 @@ def create_log_dir(root="output/enquirer_logs"):
 
 
 if __name__ == "__main__":
-    cli.add_command(train)
-    cli.add_command(test)
     cli()

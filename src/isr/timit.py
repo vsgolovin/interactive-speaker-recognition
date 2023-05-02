@@ -368,7 +368,7 @@ class TimitXVectors:
         """
         # sample speakers for every game in batch
         spkr_inds = torch.multinomial(
-            torch.ones(len(self.speakers[subset])).repeat((batch_size, 1)),
+            torch.ones((batch_size, len(self.speakers[subset]))),
             num_samples=num_speakers)
         voice_prints = self.voice_prints[subset][spkr_inds, :]
 
