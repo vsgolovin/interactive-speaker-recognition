@@ -2,6 +2,7 @@ from typing import Optional
 import torch
 from torch import nn, Tensor
 from torch.nn import functional as F
+from isr import utils
 
 
 class Guesser(nn.Module):
@@ -99,6 +100,66 @@ class Enquirer(nn.Module):
             inp = torch.cat([start, X], dim=1)
         last_output = self.lstm(inp)[0][:, -1, :]  # [batch, d * 2]
         return self.mlp(torch.cat([last_output, G_hat], 1))
+
+
+class CodebookEnquirer(Enquirer):
+    def __init__(self, codebook_size: int, emb_dim: int):
+        """
+        Enquirer modification that uses codebook -- a tensor of word
+        embeddings -- in order to compute final probabilities.
+        By default codebook is randomly initialized, use `load_codebook()`
+        in order to use word embeddings.
+
+        Parameters
+        ----------
+        vocab_size : int
+            Number of words in codebook.
+        emb_dim : int
+            Word embeddings dimension size.
+
+        """
+        super().__init__(emb_dim=emb_dim, n_outputs=emb_dim)
+        self.mlp.pop(-1)  # remove softmax
+        self.cb_size = codebook_size
+        self.emb_dim = emb_dim
+
+        # random codebook
+        codebook = torch.randn((self.cb_size, emb_dim))
+        self.register_buffer("codebook", codebook, persistent=False)
+
+        # codebook shift and scale for word embeddings normalization
+        self.register_buffer("mu", torch.zeros((emb_dim,)), persistent=True)
+        self.register_buffer("sigma", torch.ones((emb_dim,)), persistent=True)
+
+        # softmax with trainable tempearature
+        self.softmax = nn.Softmax(dim=1)
+        self.t_coeff = nn.Parameter(torch.tensor(1e-4), requires_grad=True)
+
+    @property
+    def temperature(self):
+        return torch.exp(self.t_coeff)
+
+    def load_codebook(self, codebook: Tensor, update_stats: bool = False):
+        """
+        Parameters
+        ----------
+        codebook : Tensor
+            2d tensor of word embeddings as rows.
+        update_stats : bool
+            Whether to use passed codebook mean and std for scaling. Default is
+            `False`, which means scaling with currently stored values.
+
+        """
+        assert codebook.shape == torch.Size([self.cb_size, self.emb_dim])
+        if update_stats:
+            self.mu = codebook.mean(0)
+            self.sigma = codebook.std(0)
+        self.codebook = (codebook - self.mu) / self.sigma
+
+    def forward(self, g: Tensor, x: Tensor) -> Tensor:
+        word_emb = super().forward(g, x)
+        distances = utils.pairwise_mse(word_emb, self.codebook)
+        return self.softmax(-distances / self.temperature)
 
 
 class Verifier(nn.Module):

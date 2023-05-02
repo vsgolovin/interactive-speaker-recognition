@@ -73,9 +73,17 @@ def g_to_g_hat(g: Tensor) -> Tensor:
 
 
 class IsrEnvironment:
-    def __init__(self, dataset: timit.TimitXVectors, guesser: nn.Module):
+    def __init__(self, dataset: timit.TimitXVectors, guesser: nn.Module,
+                 word_ind_transform: Optional[Tensor] = None):
+        """
+        `word_ind_transform` is a tensor of integers, that maps words from
+        word selection model (typically `Enquirer`) to dataset vocabulary.
+        Default is `None`, which assumes no transformation is needed -- model
+        and dataset have the same vocabulary
+        """
         self.dset = dataset
         self.model = guesser.eval()
+        self.transform = word_ind_transform
 
         # environment settings, updated by `reset()`
         self.subset = None
@@ -111,6 +119,9 @@ class IsrEnvironment:
         return self.states
 
     def _step(self, word_inds: Tensor) -> Tensor:
+        word_inds = word_inds.cpu()
+        if self.transform is not None:
+            word_inds = self.transform[word_inds.to(self.transform.device)]
         x = self.dset.get_word_embeddings(self.speaker_ids, word_inds)
         append_word_vectors(self.states, x, self.num_speakers, self.word_index)
         self.word_index += 1
@@ -134,8 +145,9 @@ class IsrEnvironment:
 
 
 class IsvEnvironment(IsrEnvironment):
-    def __init__(self, dataset: timit.TimitXVectors, verifier: nn.Module):
-        super().__init__(dataset, verifier)
+    def __init__(self, dataset: timit.TimitXVectors, verifier: nn.Module,
+                 word_ind_transform: Optional[Tensor] = None):
+        super().__init__(dataset, verifier, word_ind_transform)
 
     def reset(self, subset: str = "train", batch_size: int = 32,
               num_words: int = 3) -> Tensor:

@@ -39,6 +39,18 @@ def test_enquirer(b: int, d: int, v: int, L: Union[int, None]):
         torch.all((probs > 0) & (probs < 1))
 
 
+@pytest.mark.parametrize("L", (0, 1, 3))
+@pytest.mark.parametrize("b,d,v", [(1, 16, 3), (16, 128, 20)])
+def test_codebook_enquirer(b: int, d: int, v: int, L: Union[int, None]):
+    enq = nnet.CodebookEnquirer(v, d)
+    g_hat = torch.randn((b, d))
+    x = torch.randn((b, L, d)) if L > 0 else None
+    probs = enq(g_hat, x)
+    assert probs.shape == torch.Size([b, v]) and \
+        torch.allclose(probs.sum(1), torch.ones(b)) and \
+        torch.all((probs > 0) & (probs < 1))
+
+
 @pytest.mark.parametrize("backend", ["mlp", "cs"])
 @pytest.mark.parametrize("b,t,d", [(1, 1, 16), (16, 5, 128)])
 def test_verifier(b: int, t: int, d: int, backend: str):

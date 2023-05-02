@@ -145,12 +145,10 @@ class XVectorsForVerifier(pl.LightningDataModule):
         self.iterations = iterations_per_epoch
 
     def _dataloader(self, subset: str) -> Generator:
-        count = 0
-        while count < self.iterations:
+        for _ in range(self.iterations):
             g, x, targets = sample_games(self.dset, subset, self.batch_size,
                                          num_words=self.T)
             yield g, x, targets
-            count += 1
 
     def train_dataloader(self):
         return self._dataloader("train")
@@ -194,6 +192,4 @@ def sample_games(dset: timit.TimitXVectors, subset: str, batch_size: int,
 
 
 if __name__ == "__main__":
-    cli.add_command(train)
-    cli.add_command(test)
     cli()

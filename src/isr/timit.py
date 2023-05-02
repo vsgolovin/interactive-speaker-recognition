@@ -294,6 +294,7 @@ class TimitXVectors:
         # common words: word_id -> word; sorted ids
         self.words = read_words_txt(data_dir / "words/WORDS.TXT")
         self.word_ids = tuple(sorted(self.words.keys()))
+        self.vocab_size = len(self.words)
 
         # split speakers into subsets
         if seed is not None:
@@ -367,7 +368,7 @@ class TimitXVectors:
         """
         # sample speakers for every game in batch
         spkr_inds = torch.multinomial(
-            torch.ones(len(self.speakers[subset])).repeat((batch_size, 1)),
+            torch.ones((batch_size, len(self.speakers[subset]))),
             num_samples=num_speakers)
         voice_prints = self.voice_prints[subset][spkr_inds, :]
 
@@ -427,3 +428,9 @@ class TimitXVectors:
             [self.word_vectors[spkr][words]
              for spkr, words in zip(speaker_ids, word_inds)],
             dim=0)
+
+    def create_codebook(self, subset: str = "train") -> Tensor:
+        wv_stack = torch.stack([self.word_vectors[spkr]
+                                for spkr in self.speakers[subset]])
+        codebook = wv_stack.mean(0)
+        return codebook
