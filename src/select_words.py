@@ -22,6 +22,9 @@ from isr.simple_agents import RandomAgent
 @click.option("-V/--isv", "verification", is_flag=True, default=False,
               help="perform speaker verification instead of default speaker " +
               "recognition")
+@click.option("--sd-file-gv", type=click.Path(),
+              default="./models/guesser.pth",
+              help="path to file with guesser/verifier state_dict")
 @click.option("--seed", type=int, default=2008, help="global seed")
 @click.option("--split-seed", type=int, default=42,
               help="seed used to perform train-val split")
@@ -33,20 +36,21 @@ from isr.simple_agents import RandomAgent
               help="[only ISV] backend to use for speaker verification")
 @click.option("--num-envs", "--batch-size", type=int, default=200,
               help="number of environments (games) to run in parallel")
-@click.option("--episodes", "--test-games", type=int, default=20000,
+@click.option("--episodes", "--test-games", type=int, default=100000,
               help="total number of episodes (games) to run")
-def main(verification: bool, seed: int, split_seed: int, num_speakers: int,
-         num_words: int, backend: str, num_envs: int, episodes: int):
+def main(verification: bool, sd_file_gv: str, seed: int, split_seed: int,
+         num_speakers: int, num_words: int, backend: str, num_envs: int,
+         episodes: int):
     seed_everything(seed)
     dset = TimitXVectors(seed=split_seed)
     if verification:
-        model = Verifier(emb_dim=512, backend=backend)
-        model.load_state_dict(torch.load("models/verifier.pth",
-                                         map_location="cpu"))
+        model = Verifier(emb_dim=dset.emb_dim, backend=backend)
+        if sd_file_gv == "./models/guesser.pth":
+            sd_file_gv = "./models/verifier.pth"
+        model.load_state_dict(torch.load(sd_file_gv, map_location="cpu"))
     else:
-        model = Guesser(emb_dim=512)
-        model.load_state_dict(torch.load("models/guesser.pth",
-                                         map_location="cpu"))
+        model = Guesser(emb_dim=dset.emb_dim)
+        model.load_state_dict(torch.load(sd_file_gv, map_location="cpu"))
 
     # read file with words
     word_dict = read_words_txt("data/words/WORDS.TXT")
@@ -73,13 +77,12 @@ def evaluate(model: Union[Guesser, Verifier], dset: TimitXVectors, subset: str,
              num_speakers: int, num_words: int, num_envs: int, episodes: int
              ) -> np.ndarray:
     is_isr = isinstance(model, Guesser)
-    VOCAB_SIZE = len(dset.words)
     # how many times every word was used
-    words_used_count = np.zeros(VOCAB_SIZE, dtype=np.int_)
+    words_used_count = np.zeros(dset.vocab_size, dtype=np.int_)
     # how many times word was used in a successful game
     words_success_count = np.zeros_like(words_used_count)
     # random word sampling / torch.multinomial wrapper
-    rand_agent = RandomAgent(total_words=VOCAB_SIZE)
+    rand_agent = RandomAgent(total_words=dset.vocab_size)
 
     # test model on `episodes` games
     sampled_episodes = 0

@@ -25,6 +25,9 @@ def cli():
 @click.option("-V/--isv", "verification", is_flag=True, default=False,
               help="perform speaker verification instead of default speaker " +
               "recognition")
+@click.option("--sd-file-gv", type=click.Path(),
+              default="./models/guesser.pth",
+              help="path to file with guesser/verifier state_dict")
 @click.option("--seed", type=int, default=2008, help="global seed")
 @click.option("--split-seed", type=int, default=42,
               help="seed used to perform train-val split")
@@ -45,9 +48,9 @@ def cli():
 @click.option("--batch-size", type=int, default=500, help="batch size")
 @click.option("--epochs-per-update", type=int, default=2,
               help="times to iterate over collected data on every update")
-@click.option("--lr-actor", type=float, default=1e-4,
+@click.option("--lr-actor", type=float, default=2e-5,
               help="PPO actor learning rate")
-@click.option("--lr-critic", type=float, default=1e-4,
+@click.option("--lr-critic", type=float, default=2e-5,
               help="PPO critic learning rate")
 @click.option("--ppo-clip", type=float, default=0.2,
               help="PPO clipping parameter (epsilon)")
@@ -55,11 +58,12 @@ def cli():
               help="PPO entropy penalty coefficient")
 @click.option("--grad-clip", type=float, default=1.0,
               help="PPO gradient clipping")
-def train(use_codebook: bool, verification: bool, seed: int, split_seed: int,
-          num_speakers: int, num_words: int, backend: str, num_envs: int,
-          episodes_per_update: int, eval_period: int, num_updates: int,
-          batch_size: int, epochs_per_update: int, lr_actor: float,
-          lr_critic: float, ppo_clip: float, entropy: float, grad_clip: float):
+def train(use_codebook: bool, verification: bool, sd_file_gv: str, seed: int,
+          split_seed: int, num_speakers: int, num_words: int, backend: str,
+          num_envs: int, episodes_per_update: int, eval_period: int,
+          num_updates: int, batch_size: int, epochs_per_update: int,
+          lr_actor: float, lr_critic: float, ppo_clip: float, entropy: float,
+          grad_clip: float):
     seed_everything(seed)
     hparams = locals()
     output_dir = Path("output")
@@ -79,13 +83,13 @@ def train(use_codebook: bool, verification: bool, seed: int, split_seed: int,
     buffer = Buffer(num_words=num_words)
     if verification:
         verifier = Verifier(emb_dim=dset.emb_dim, backend=backend)
-        verifier.load_state_dict(torch.load("models/verifier.pth",
-                                            map_location="cpu"))
+        if sd_file_gv == "./models/guesser.pth":
+            sd_file_gv = "./models/verifier.pth"
+        verifier.load_state_dict(torch.load(sd_file_gv, map_location="cpu"))
         env = IsvEnvironment(dset, verifier, word_inds)
     else:
         guesser = Guesser(emb_dim=dset.emb_dim)
-        guesser.load_state_dict(torch.load("models/guesser.pth",
-                                           map_location="cpu"))
+        guesser.load_state_dict(torch.load(sd_file_gv, map_location="cpu"))
         env = IsrEnvironment(dset, guesser, word_inds)
 
     # tensorboard logger
@@ -117,11 +121,12 @@ def train(use_codebook: bool, verification: bool, seed: int, split_seed: int,
                 episode_count += num_envs
                 writer.add_scalar("reward/train", rewards.mean().item(),
                                   global_step=episode_count)
-                writer.add_scalar(
-                    "temperature",
-                    ppo.actor.model.t_coeff.exp().item(),
-                    global_step=episode_count
-                )
+                if use_codebook:
+                    writer.add_scalar(
+                        "temperature",
+                        ppo.actor.model.t_coeff.exp().item(),
+                        global_step=episode_count
+                    )
             losses = ppo.update(buffer, batch_size, epochs_per_update)
             buffer.empty()
             for k, v in losses.items():
@@ -129,7 +134,8 @@ def train(use_codebook: bool, verification: bool, seed: int, split_seed: int,
 
             # evaluate on validation set
             if (i + 1) % eval_period == 0:
-                r_avg = evaluate(ppo, env, "val", progress_bar=False)
+                r_avg = evaluate(ppo, env, "val", num_speakers=num_speakers,
+                                 num_words=num_words, progress_bar=False)
                 if r_avg > max_reward:
                     max_reward = r_avg
                     ppo.save(output_dir)
@@ -162,7 +168,10 @@ def train(use_codebook: bool, verification: bool, seed: int, split_seed: int,
               "recognition")
 @click.option("-A/--all", "all_subsets", is_flag=True, default=False)
 @click.option("--sd-file", type=click.Path(), default="./output/actor.pth",
-              help="path to file with guesser state_dict")
+              help="path to file with enquirer state_dict")
+@click.option("--sd-file-gv", type=click.Path(),
+              default="./models/guesser.pth",
+              help="path to file with guesser/verifier state_dict")
 @click.option("--seed", type=int, default=2008, help="global seed")
 @click.option("--split-seed", type=int, default=42,
               help="seed used to perform train-val split")
@@ -177,8 +186,9 @@ def train(use_codebook: bool, verification: bool, seed: int, split_seed: int,
 @click.option("--episodes", "--test-games", type=int, default=20000,
               help="total number of episodes (games) to run")
 def test(use_codebook: bool, verification: bool, all_subsets: bool,
-         sd_file: str, seed: int, split_seed: int, num_speakers: int,
-         num_words: int, backend: str, num_envs: int, episodes: int):
+         sd_file: str, sd_file_gv: str, seed: int, split_seed: int,
+         num_speakers: int, num_words: int, backend: str, num_envs: int,
+         episodes: int):
     seed_everything(seed)
     dset = timit.TimitXVectors(seed=split_seed)
     if use_codebook:
@@ -195,13 +205,13 @@ def test(use_codebook: bool, verification: bool, all_subsets: bool,
 
     if verification:
         verifier = Verifier(emb_dim=dset.emb_dim, backend=backend)
-        verifier.load_state_dict(torch.load("models/verifier.pth",
-                                            map_location="cpu"))
+        if sd_file_gv == "./models/guesser.pth":
+            sd_file_gv = "./models/verifier.pth"
+        verifier.load_state_dict(torch.load(sd_file_gv, map_location="cpu"))
         env = IsvEnvironment(dset, verifier, word_inds)
     else:
-        guesser = Guesser(emb_dim=512)
-        guesser.load_state_dict(torch.load("models/guesser.pth",
-                                           map_location="cpu"))
+        guesser = Guesser(emb_dim=dset.emb_dim)
+        guesser.load_state_dict(torch.load(sd_file_gv, map_location="cpu"))
         env = IsrEnvironment(dset, guesser, word_inds)
 
     subsets = ["test"]

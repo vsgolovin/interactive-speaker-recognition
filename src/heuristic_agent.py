@@ -14,6 +14,9 @@ from isr.simple_agents import HeuristicAgent, RandomAgent
               help="perform speaker verification instead of default speaker " +
               "recognition")
 @click.option("-A/--all", "all_subsets", is_flag=True, default=False)
+@click.option("--sd-file-gv", type=click.Path(),
+              default="./models/guesser.pth",
+              help="path to file with guesser/verifier state_dict")
 @click.option("--seed", type=int, default=2008, help="global seed")
 @click.option("--split-seed", type=int, default=42,
               help="seed used to perform train-val split")
@@ -25,38 +28,38 @@ from isr.simple_agents import HeuristicAgent, RandomAgent
               help="number of words asked in every game")
 @click.option("--backend", type=click.Choice(["mlp", "cs"]), default="mlp",
               help="[only ISV] backend to use for speaker verification")
-@click.option("--num-envs", "--batch-size", type=int, default=200,
+@click.option("--num-envs", "--batch-size", type=int, default=500,
               help="number of ISR environments (games) to run in parallel")
-@click.option("--episodes", "--test-games", type=int, default=20000,
+@click.option("--episodes", "--test-games", type=int, default=50000,
               help="total number of episodes (games) to run")
 @click.option("--random-agent", is_flag=True, default=False,
               help="sample words with a random agent")
-@click.option("-k", "--agent-num-words", type=int, default=10,
+@click.option("-w", "--agent-num-words", type=int, default=10,
               help="number of top scoring words agent will use")
 @click.option("--nonuniform", is_flag=True, default=False,
               help="use higher-scoring words more often")
 @click.option("--temperature", type=float, default=0.05,
               help="softmax temperature for converting scores into " +
               "probabilities")
-def main(verification: bool, all_subsets: bool, seed: int, split_seed: int,
-         wscore_file: str, num_speakers: int, num_words: int, backend: str,
-         num_envs: int, episodes: int, random_agent: bool,
+def main(verification: bool, all_subsets: bool, sd_file_gv: str, seed: int,
+         split_seed: int, wscore_file: str, num_speakers: int, num_words: int,
+         backend: str, num_envs: int, episodes: int, random_agent: bool,
          agent_num_words: int, nonuniform: bool, temperature: float):
     # load dataset and guesser
     seed_everything(seed)
     dset = TimitXVectors(seed=split_seed)
     if verification:
-        model = Verifier(emb_dim=512, backend=backend)
-        model.load_state_dict(torch.load("models/verifier.pth",
-                                         map_location="cpu"))
+        model = Verifier(emb_dim=dset.emb_dim, backend=backend).to("cuda")
+        if sd_file_gv == "./models/guesser.pth":
+            sd_file_gv = "./models/verifier.pth"
+        model.load_state_dict(torch.load(sd_file_gv, map_location="cuda"))
     else:
-        model = Guesser(emb_dim=512)
-        model.load_state_dict(torch.load("models/guesser.pth",
-                                         map_location="cpu"))
+        model = Guesser(emb_dim=dset.emb_dim).to("cuda")
+        model.load_state_dict(torch.load(sd_file_gv, map_location="cuda"))
 
     # read word scores
     if random_agent:
-        agent = RandomAgent(total_words=len(dset.words))
+        agent = RandomAgent(total_words=dset.vocab_size)
     else:
         word_scores = read_word_scores(wscore_file)
         agent = HeuristicAgent(
@@ -88,7 +91,7 @@ def read_word_scores(path: str):
 def evaluate(model: Union[Guesser, Verifier], dset: TimitXVectors,
              agent: Union[HeuristicAgent, RandomAgent], subset: str,
              num_speakers: int, num_words: int, num_envs: int, episodes: int):
-    is_isr = isinstance(model, Guesser)
+    is_isr = not isinstance(model, Verifier)
     sampled_episodes = 0
     accuracy = 0.0
     model.eval()
@@ -103,7 +106,9 @@ def evaluate(model: Union[Guesser, Verifier], dset: TimitXVectors,
             word_inds = agent.sample(num_envs, num_words)
             x = dset.get_word_embeddings(speaker_ids, word_inds)
             with torch.no_grad():
-                output = model.forward(g, x)
+                g = g.to("cuda")
+                x = x.to("cuda")
+                output = model.forward(g, x).cpu()
                 if is_isr:
                     predictions = output.argmax(dim=1)
                 else:
