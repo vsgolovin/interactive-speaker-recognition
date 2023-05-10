@@ -1,4 +1,4 @@
-from typing import Optional, Sequence, Tuple, Union
+from typing import Iterable, Optional, Sequence, Tuple, Union
 from pathlib import Path
 import random
 import librosa
@@ -7,6 +7,7 @@ import pandas as pd
 import soundfile as sf
 import torch
 from torch import Tensor
+import torchaudio
 
 
 class TimitCorpus:
@@ -71,8 +72,45 @@ class TimitCorpus:
                     )
         self._save_word_ids(save_to)  # writes to `save_to`/WORDS.TXT
 
+    def add_noise_to_words(self, words_dir: Union[Path, str],
+                           noise_file: Tensor, save_to: Union[Path, dir],
+                           snr: int = 3):
+        """
+        Add noise from `noise_file` to word recordings in `words_dir`, save
+        resulting .wav files to `save_to` directory.
+        """
+        # load noise
+        noise, noise_sr = torchaudio.load(noise_file)
+        sz_noise = noise.size(1)
+
+        for speaker_dir in words_dir.iterdir():
+            # every directory in words_dir will be created in save_to
+            if not speaker_dir.is_dir():
+                continue
+            out_dir = save_to / speaker_dir.name
+            out_dir.mkdir(parents=True, exist_ok=True)
+
+            for file in speaker_dir.iterdir():
+                if not file.suffix.lower() == ".wav":
+                    continue
+                wfm, sr = torchaudio.load(file)
+                assert sr == noise_sr
+
+                # select noise segment
+                sz = wfm.size(1)
+                assert sz <= sz_noise, f"{file} is longer than noise"
+                start = random.randrange(0, sz_noise - sz)
+                end = start + sz
+
+                # add noise segment to waveform
+                noisy = torchaudio.functional.add_noise(
+                    wfm, noise[:, start:end], snr=torch.tensor([snr]))
+                torchaudio.save(out_dir / file.name, noisy, sample_rate=sr,
+                                encoding="PCM_S", bits_per_sample=16)
+
     def kaldi_data_prep(self, words_dir: Union[Path, str],
                         kaldi_root: Union[Path, str],
+                        noise_names: Iterable[str] = [],
                         output_dir: Union[Path, str] = "data/kaldi"):
         """
         Create files needed for extracting embeddings with Kaldi.
@@ -126,16 +164,23 @@ class TimitCorpus:
             spk2utt.close()
 
         # create the same files for single word recordings
-        words_out_dir = output_dir / "words"
-        words_out_dir.mkdir(exist_ok=True)
-        wav_scp = open(words_out_dir / "wav.scp", "w")
-        utt2spk = open(words_out_dir / "utt2spk", "w")
-        spk2utt = open(words_out_dir / "spk2utt", "w")
-
         if not self.words:
             words = read_words_txt(words_dir / "WORDS.TXT")
         else:
             words = self.words
+        for suffix in [""] + list(noise_names):
+            self._kaldi_process_words(words_dir, words, output_dir,
+                                      suffix=suffix)
+
+    def _kaldi_process_words(self, words_dir: Path, words: dict,
+                             output_dir: Path, suffix: str = ""):
+        dirname = "words" if suffix == "" else f"words_{suffix}"
+        words_dir = words_dir.parent / dirname
+        words_out_dir = output_dir / dirname
+        words_out_dir.mkdir(exist_ok=True)
+        wav_scp = open(words_out_dir / "wav.scp", "w")
+        utt2spk = open(words_out_dir / "utt2spk", "w")
+        spk2utt = open(words_out_dir / "spk2utt", "w")
 
         for spkr_id in self.spkrinfo.index:
             spkr_dir = words_dir / spkr_id
