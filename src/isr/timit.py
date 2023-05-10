@@ -312,7 +312,8 @@ class TimitXVectors:
     Dataset of X-Vector embeddings for speakers, sentences and words.
     """
     def __init__(self, data_dir: Union[Path, str] = "./data",
-                 val_size: float = 0.2, seed: Optional[int] = None):
+                 val_size: float = 0.2, seed: Optional[int] = None,
+                 noisy_words: bool = False):
         """
 
         Parameters
@@ -340,6 +341,10 @@ class TimitXVectors:
         self.words = read_words_txt(data_dir / "words/WORDS.TXT")
         self.word_ids = tuple(sorted(self.words.keys()))
         self.vocab_size = len(self.words)
+        self.noise_types = ["none"]
+        if noisy_words:
+            self.noise_types += sorted(
+                [d.name.split("_")[1] for d in data_dir.glob("words_*")])
 
         # split speakers into subsets
         if seed is not None:
@@ -369,14 +374,18 @@ class TimitXVectors:
         xv_train = np.load(data_dir / "xvectors_train/spk_xvector.npz")
         xv_test = np.load(data_dir / "xvectors_test/spk_xvector.npz")
         # f"{speaker_id}_{word_id}" -> word embedding
-        xv_words = np.load(data_dir / "xvectors_words/xvector.npz")
+        xv_words = [np.load(data_dir / "xvectors_words/xvector.npz")]
+        for noise_type in self.noise_types[1:]:
+            xv_words.append(
+                np.load(data_dir / f"xvectors_words_{noise_type}/xvector.npz")
+            )
         # save embeddings dimension
         for vec in xv_train.values():
             self.emb_dim = vec.shape[0]
             break
         # copy embeddings to tensors, one per subset
         self.voice_prints = {}
-        self.word_vectors = {}
+        self.word_vectors = [{} for _ in range(len(self.noise_types))]
         for subset in ("train", "val", "test"):
             spkrs = self.speakers[subset]
             xv = xv_test if subset == "test" else xv_train
@@ -386,9 +395,10 @@ class TimitXVectors:
             for i, spkr in enumerate(spkrs):
                 self.voice_prints[subset][i] = torch.FloatTensor(xv[spkr])
                 keys = [f"{spkr}_{wid}" for wid in self.word_ids]
-                self.word_vectors[spkr] = torch.FloatTensor(
-                    np.stack([xv_words.get(key, np.zeros(self.emb_dim))
-                             for key in keys]))
+                for j in range(len(self.noise_types)):
+                    self.word_vectors[j][spkr] = torch.FloatTensor(
+                        np.stack([xv_words[j].get(key, np.zeros(self.emb_dim))
+                                  for key in keys]))
 
     def sample_isr_games(self, batch_size: int, subset: str = "train",
                          num_speakers: int = 5
@@ -467,11 +477,16 @@ class TimitXVectors:
         return voice_prints, real_ids, targets
 
     def get_word_embeddings(self, speaker_ids: np.ndarray,
-                            word_inds: Tensor) -> Tensor:
+                            word_inds: Tensor,
+                            noise_inds: Optional[Tensor] = None) -> Tensor:
+        if noise_inds is None:
+            noise_inds = torch.randint(low=0, high=len(self.noise_types),
+                                       size=(word_inds.size(0),))
+
         # TODO: store word embeddings differently to avoid using listcomp
         return torch.stack(
-            [self.word_vectors[spkr][words]
-             for spkr, words in zip(speaker_ids, word_inds)],
+            [self.word_vectors[n][spkr][words]
+             for n, spkr, words in zip(noise_inds, speaker_ids, word_inds)],
             dim=0)
 
     def create_codebook(self, subset: str = "train") -> Tensor:

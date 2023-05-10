@@ -31,6 +31,8 @@ def cli():
 @click.option("--seed", type=int, default=2303, help="global seed")
 @click.option("--split-seed", type=int, default=42,
               help="seed used to perform train-val split")
+@click.option("-N", "--noise", is_flag=True, default=False,
+              help="whether to use noisy word recordings")
 @click.option("-K", "--num-speakers", type=int, default=5,
               help="number of speakers present in every game")
 @click.option("-T", "--num-words", type=int, default=3,
@@ -43,12 +45,12 @@ def cli():
 @click.option("--lr", type=float, default=1e-4, help="learning rate")
 @click.option("--weight-decay", type=float, default=1e-4,
               help="L2 regularization")
-def train(sd_file: str, seed: int, split_seed: int, num_speakers: int,
-          num_words: int, batch_size: int, iterations: int, max_epochs: int,
-          lr: float, weight_decay: float):
+def train(sd_file: str, seed: int, split_seed: int, noise: bool,
+          num_speakers: int, num_words: int, batch_size: int, iterations: int,
+          max_epochs: int, lr: float, weight_decay: float):
     pl.seed_everything(seed)
     dm = XVectorsForGuesser(num_speakers, num_words, batch_size, iterations,
-                            seed=split_seed)
+                            seed=split_seed, noisy_words=noise)
     guesser = LitGuesser(lr, weight_decay)
     early_stopping = EarlyStopping(monitor="val_loss", patience=5, mode="min")
     save_best = ModelCheckpoint(monitor="val_loss", mode="min", save_top_k=1,
@@ -72,6 +74,8 @@ def train(sd_file: str, seed: int, split_seed: int, num_speakers: int,
 @click.option("--seed", type=int, default=2303, help="global seed")
 @click.option("--split-seed", type=int, default=42,
               help="seed used to perform train-val split")
+@click.option("-N", "--noise", is_flag=True, default=False,
+              help="whether to use noisy word recordings")
 @click.option("-K", "--num-speakers", type=int, default=5,
               help="number of speakers present in every game")
 @click.option("-T", "--num-words", type=int, default=3,
@@ -80,11 +84,12 @@ def train(sd_file: str, seed: int, split_seed: int, num_speakers: int,
 @click.option("--test-games", type=int, default=20000,
               help="total number of games (batch_size * iterations)")
 def test(all_subsets: bool, sd_file: str, seed: int, split_seed: int,
-         num_speakers: int, num_words: int, batch_size: int, test_games: int):
+         noise: bool, num_speakers: int, num_words: int, batch_size: int,
+         test_games: int):
     pl.seed_everything(seed)
     iterations = test_games // batch_size
     dm = XVectorsForGuesser(num_speakers, num_words, batch_size, iterations,
-                            seed=split_seed)
+                            seed=split_seed, noisy_words=noise)
     guesser = LitGuesser()
     guesser.model.load_state_dict(torch.load(sd_file,
                                              map_location="cpu"))
@@ -147,11 +152,12 @@ class XVectorsForGuesser(pl.LightningDataModule):
     def __init__(self, num_speakers: int, num_words: int,
                  batch_size: int, iterations_per_epoch: int,
                  data_dir: Union[Path, str] = "./data", val_size: float = 0.2,
-                 seed: Optional[int] = None):
+                 seed: Optional[int] = None, noisy_words: bool = False):
         super().__init__()
         self.K = num_speakers
         self.T = num_words
-        self.dset = timit.TimitXVectors(data_dir, val_size, seed)
+        self.dset = timit.TimitXVectors(data_dir, val_size, seed,
+                                        noisy_words=noisy_words)
         self.batch_size = batch_size
         self.iterations = iterations_per_epoch
         self.agent = RandomAgent(total_words=len(self.dset.words))
