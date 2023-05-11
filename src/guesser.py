@@ -160,7 +160,7 @@ class XVectorsForGuesser(pl.LightningDataModule):
                                         noisy_words=noisy_words)
         self.batch_size = batch_size
         self.iterations = iterations_per_epoch
-        self.agent = RandomAgent(total_words=len(self.dset.words))
+        self.agent = RandomAgent(total_words=self.dset.vocab_size)
 
     def _dataloader(self, subset: str) -> Generator:
         for _ in range(self.iterations):

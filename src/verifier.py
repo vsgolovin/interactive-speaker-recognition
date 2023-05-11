@@ -171,36 +171,5 @@ class XVectorsForVerifier(pl.LightningDataModule):
         return self._dataloader("test")
 
 
-def sample_games(dset: timit.TimitXVectors, subset: str, batch_size: int,
-                 num_words: int = 5):
-    # sample speakers
-    N = len(dset.speakers[subset])
-    # two speakers per sample
-    spkr_inds = torch.multinomial(
-        torch.ones((batch_size, N)),
-        num_samples=2
-    )
-    targets = torch.randint(0, 2, size=(batch_size,))
-    # speakers to verify, use their voice prints
-    ver_inds = spkr_inds[:, 1]
-    voice_prints = dset.voice_prints[subset][ver_inds, :]
-    # real speakers will be used for word recordings
-    real_inds = spkr_inds.gather(1, targets.unsqueeze(1)).squeeze(1)
-
-    # sample words
-    word_inds = torch.multinomial(
-        torch.ones((batch_size, len(dset.words))),
-        num_samples=num_words
-    )
-    spkr_ids = dset.speakers[subset][real_inds]
-    word_xvectors = torch.stack(
-        [dset.word_vectors[spkr][inds]
-         for spkr, inds in zip(spkr_ids, word_inds)],
-        dim=0
-    )
-
-    return voice_prints, word_xvectors, targets
-
-
 if __name__ == "__main__":
     cli()
