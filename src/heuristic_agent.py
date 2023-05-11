@@ -22,6 +22,8 @@ from isr.simple_agents import HeuristicAgent, RandomAgent
               help="seed used to perform train-val split")
 @click.option("--wscore-file", type=click.Path(),
               default="./models/word_scores.csv", help="file with word scores")
+@click.option("-N", "--noise", is_flag=True, default=False,
+              help="whether to use noisy word recordings")
 @click.option("-K", "--num-speakers", type=int, default=5,
               help="[only ISR] number of speakers present in every game")
 @click.option("-T", "--num-words", type=int, default=3,
@@ -42,12 +44,13 @@ from isr.simple_agents import HeuristicAgent, RandomAgent
               help="softmax temperature for converting scores into " +
               "probabilities")
 def main(verification: bool, all_subsets: bool, sd_file_gv: str, seed: int,
-         split_seed: int, wscore_file: str, num_speakers: int, num_words: int,
-         backend: str, num_envs: int, episodes: int, random_agent: bool,
-         agent_num_words: int, nonuniform: bool, temperature: float):
+         split_seed: int, wscore_file: str, noise: bool, num_speakers: int,
+         num_words: int, backend: str, num_envs: int, episodes: int,
+         random_agent: bool, agent_num_words: int, nonuniform: bool,
+         temperature: float):
     # load dataset and guesser
     seed_everything(seed)
-    dset = TimitXVectors(seed=split_seed)
+    dset = TimitXVectors(seed=split_seed, noisy_words=noise)
     if verification:
         model = Verifier(emb_dim=dset.emb_dim, backend=backend).to("cuda")
         if sd_file_gv == "./models/guesser.pth":

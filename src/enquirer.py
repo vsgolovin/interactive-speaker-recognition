@@ -31,6 +31,8 @@ def cli():
 @click.option("--seed", type=int, default=2008, help="global seed")
 @click.option("--split-seed", type=int, default=42,
               help="seed used to perform train-val split")
+@click.option("-N", "--noise", is_flag=True, default=False,
+              help="whether to use noisy word recordings")
 @click.option("-K", "--num-speakers", type=int, default=5,
               help="number of speakers present in every game")
 @click.option("-T", "--num-words", type=int, default=3,
@@ -59,15 +61,15 @@ def cli():
 @click.option("--grad-clip", type=float, default=1.0,
               help="PPO gradient clipping")
 def train(use_codebook: bool, verification: bool, sd_file_gv: str, seed: int,
-          split_seed: int, num_speakers: int, num_words: int, backend: str,
-          num_envs: int, episodes_per_update: int, eval_period: int,
-          num_updates: int, batch_size: int, epochs_per_update: int,
-          lr_actor: float, lr_critic: float, ppo_clip: float, entropy: float,
-          grad_clip: float):
+          split_seed: int, noise: bool, num_speakers: int, num_words: int,
+          backend: str, num_envs: int, episodes_per_update: int,
+          eval_period: int, num_updates: int, batch_size: int,
+          epochs_per_update: int, lr_actor: float, lr_critic: float,
+          ppo_clip: float, entropy: float, grad_clip: float):
     seed_everything(seed)
     hparams = locals()
     output_dir = Path("output")
-    dset = timit.TimitXVectors(seed=split_seed)
+    dset = timit.TimitXVectors(seed=split_seed, noisy_words=noise)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if use_codebook:
         codebook = dset.create_codebook("train")
@@ -175,6 +177,8 @@ def train(use_codebook: bool, verification: bool, sd_file_gv: str, seed: int,
 @click.option("--seed", type=int, default=2008, help="global seed")
 @click.option("--split-seed", type=int, default=42,
               help="seed used to perform train-val split")
+@click.option("-N", "--noise", is_flag=True, default=False,
+              help="whether to use noisy word recordings")
 @click.option("-K", "--num-speakers", type=int, default=5,
               help="number of speakers present in every game")
 @click.option("-T", "--num-words", type=int, default=3,
@@ -187,10 +191,10 @@ def train(use_codebook: bool, verification: bool, sd_file_gv: str, seed: int,
               help="total number of episodes (games) to run")
 def test(use_codebook: bool, verification: bool, all_subsets: bool,
          sd_file: str, sd_file_gv: str, seed: int, split_seed: int,
-         num_speakers: int, num_words: int, backend: str, num_envs: int,
-         episodes: int):
+         noise: bool, num_speakers: int, num_words: int, backend: str,
+         num_envs: int, episodes: int):
     seed_everything(seed)
-    dset = timit.TimitXVectors(seed=split_seed)
+    dset = timit.TimitXVectors(seed=split_seed, noisy_words=noise)
     if use_codebook:
         codebook = dset.create_codebook("train")
         word_inds = torch.arange(1, dset.vocab_size, 2)  # [1, 3, ..., 19]

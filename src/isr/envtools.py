@@ -76,7 +76,7 @@ class IsrEnvironment:
     def __init__(self, dataset: timit.TimitXVectors, guesser: nn.Module,
                  word_ind_transform: Optional[Tensor] = None):
         """
-        `word_ind_transform` is a tensor of integers, that maps words from
+        `word_ind_transform` is a tensor of integers that maps words from
         word selection model (typically `Enquirer`) to dataset vocabulary.
         Default is `None`, which assumes no transformation is needed -- model
         and dataset have the same vocabulary
@@ -96,6 +96,7 @@ class IsrEnvironment:
         self.speaker_ids = None
         self.targets = None
         self.states = None
+        self.noise_inds = None
 
         # method to initialize games
         self.sampler = self.dset.sample_isr_games
@@ -105,7 +106,8 @@ class IsrEnvironment:
                                           self.num_speakers)
 
     def reset(self, subset: str = "train", batch_size: int = 32,
-              num_speakers: int = 5, num_words: int = 3) -> Tensor:
+              num_speakers: int = 5, num_words: int = 3,
+              noise_ind: Optional[int] = None) -> Tensor:
         "Returns state tensor"
         self.subset = subset
         self.batch_size = batch_size
@@ -115,6 +117,12 @@ class IsrEnvironment:
         voice_prints, speaker_ids, targets = self._init_game()
         self.speaker_ids = speaker_ids
         self.targets = targets
+        if noise_ind is None:
+            self.noise_inds = torch.randint(0, len(self.dset.noise_types),
+                                            size=(batch_size,))
+        else:
+            self.noise_inds = torch.full((batch_size,), fill_value=noise_ind,
+                                         dtype=torch.int64)
         self.states = pack_states(voice_prints, None, num_words)
         return self.states
 
@@ -122,7 +130,8 @@ class IsrEnvironment:
         word_inds = word_inds.cpu()
         if self.transform is not None:
             word_inds = self.transform[word_inds.to(self.transform.device)]
-        x = self.dset.get_word_embeddings(self.speaker_ids, word_inds)
+        x = self.dset.get_word_embeddings(self.speaker_ids, word_inds,
+                                          noise_inds=self.noise_inds)
         append_word_vectors(self.states, x, self.num_speakers, self.word_index)
         self.word_index += 1
         return x

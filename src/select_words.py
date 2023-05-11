@@ -28,6 +28,8 @@ from isr.simple_agents import RandomAgent
 @click.option("--seed", type=int, default=2008, help="global seed")
 @click.option("--split-seed", type=int, default=42,
               help="seed used to perform train-val split")
+@click.option("-N", "--noise", is_flag=True, default=False,
+              help="whether to use noisy word recordings")
 @click.option("-K", "--num-speakers", type=int, default=5,
               help="[only ISR] number of speakers present in every game")
 @click.option("-T", "--num-words", type=int, default=3,
@@ -39,10 +41,10 @@ from isr.simple_agents import RandomAgent
 @click.option("--episodes", "--test-games", type=int, default=100000,
               help="total number of episodes (games) to run")
 def main(verification: bool, sd_file_gv: str, seed: int, split_seed: int,
-         num_speakers: int, num_words: int, backend: str, num_envs: int,
-         episodes: int):
+         noise: bool, num_speakers: int, num_words: int, backend: str,
+         num_envs: int, episodes: int):
     seed_everything(seed)
-    dset = TimitXVectors(seed=split_seed)
+    dset = TimitXVectors(seed=split_seed, noisy_words=noise)
     if verification:
         model = Verifier(emb_dim=dset.emb_dim, backend=backend)
         if sd_file_gv == "./models/guesser.pth":
