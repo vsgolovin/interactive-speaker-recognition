@@ -6,7 +6,7 @@ words are chosen randomly.
 """
 
 
-from typing import Union
+from typing import Optional, Union
 from tqdm import tqdm
 from matplotlib import pyplot as plt
 import numpy as np
@@ -30,6 +30,8 @@ from isr.simple_agents import RandomAgent
               help="seed used to perform train-val split")
 @click.option("-N", "--noise", is_flag=True, default=False,
               help="whether to use noisy word recordings")
+@click.option("--noise-index", type=int, default=-1,
+              help="index of noise type to use exclusively (-1 to use all)")
 @click.option("-K", "--num-speakers", type=int, default=5,
               help="[only ISR] number of speakers present in every game")
 @click.option("-T", "--num-words", type=int, default=3,
@@ -41,9 +43,11 @@ from isr.simple_agents import RandomAgent
 @click.option("--episodes", "--test-games", type=int, default=100000,
               help="total number of episodes (games) to run")
 def main(verification: bool, sd_file_gv: str, seed: int, split_seed: int,
-         noise: bool, num_speakers: int, num_words: int, backend: str,
-         num_envs: int, episodes: int):
+         noise: bool, noise_index: int, num_speakers: int, num_words: int,
+         backend: str, num_envs: int, episodes: int):
     seed_everything(seed)
+    if noise_index == -1:
+        noise_index = None
     dset = TimitXVectors(seed=split_seed, noisy_words=noise)
     if verification:
         model = Verifier(emb_dim=dset.emb_dim, backend=backend)
@@ -64,7 +68,7 @@ def main(verification: bool, sd_file_gv: str, seed: int, split_seed: int,
     fig, [ax1, ax2] = plt.subplots(nrows=2, sharex=True)
     for subset, ax in zip(["train", "val"], [ax1, ax2]):
         word_acc = evaluate(model, dset, subset, num_speakers, num_words,
-                            num_envs, episodes)
+                            num_envs, episodes, noise_index=noise_index)
         acc_dict = dict(zip(word_ids, word_acc))
         save_scores(acc_dict, f"output/word_scores_{subset}.csv")
         bar_plot(word_acc, ax, ylabel=f"{subset} accuracy")
@@ -76,7 +80,8 @@ def main(verification: bool, sd_file_gv: str, seed: int, split_seed: int,
 
 
 def evaluate(model: Union[Guesser, Verifier], dset: TimitXVectors, subset: str,
-             num_speakers: int, num_words: int, num_envs: int, episodes: int
+             num_speakers: int, num_words: int, num_envs: int, episodes: int,
+             noise_index: Optional[int] = None
              ) -> np.ndarray:
     is_isr = isinstance(model, Guesser)
     # how many times every word was used
@@ -99,7 +104,12 @@ def evaluate(model: Union[Guesser, Verifier], dset: TimitXVectors, subset: str,
             else:
                 g, speaker_ids, targets = dset.sample_isv_games(bs, subset)
             word_inds = rand_agent.sample(bs, num_words)
-            x = dset.get_word_embeddings(speaker_ids, word_inds)
+            if noise_index is not None:
+                noise_inds = torch.full((bs,), fill_value=noise_index,
+                                        dtype=torch.int64)
+            else:
+                noise_inds = None
+            x = dset.get_word_embeddings(speaker_ids, word_inds, noise_inds)
             with torch.no_grad():
                 output = model.forward(g, x)
                 if is_isr:
