@@ -70,9 +70,11 @@ class AdditiveAttention(nn.Module):
 
 
 class Enquirer(nn.Module):
-    def __init__(self, emb_dim: int = 512, n_outputs: int = 20):
+    def __init__(self, emb_dim: int = 512, out_dim: int = 20):
         "Use n_outputs=1 for value function / critic"
         super().__init__()
+        self.emb_dim = emb_dim
+        self.out_dim = out_dim
         self.start_token = nn.Parameter(
             torch.rand(emb_dim) / (emb_dim)**0.5,
             # same as LSTM weight initialization
@@ -87,8 +89,8 @@ class Enquirer(nn.Module):
         self.mlp = nn.Sequential(
             nn.Linear(emb_dim * 3, emb_dim * 2),
             nn.ReLU(),
-            nn.Linear(emb_dim * 2, n_outputs),
-            nn.Softmax(dim=-1) if n_outputs > 1 else nn.Sigmoid()
+            nn.Linear(emb_dim * 2, out_dim),
+            nn.Softmax(dim=-1) if out_dim > 1 else nn.Sigmoid()
         )
 
     def forward(self, G_hat: Tensor, X: Optional[Tensor] = None) -> Tensor:
@@ -118,7 +120,7 @@ class CodebookEnquirer(Enquirer):
             Word embeddings dimension size.
 
         """
-        super().__init__(emb_dim=emb_dim, n_outputs=emb_dim)
+        super().__init__(emb_dim=emb_dim, out_dim=emb_dim)
         self.mlp.pop(-1)  # remove softmax
         self.cb_size = codebook_size
         self.emb_dim = emb_dim

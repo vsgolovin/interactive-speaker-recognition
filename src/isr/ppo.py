@@ -127,7 +127,7 @@ class Actor(nn.Module):
 class Critic(nn.Module):
     def __init__(self, input_size: int):
         super().__init__()
-        self.model = Enquirer(emb_dim=input_size, n_outputs=1)
+        self.model = Enquirer(emb_dim=input_size, out_dim=1)
 
     def forward(self, states: Tensor) -> Tensor:
         g, x = unpack_states(states)
@@ -149,6 +149,7 @@ class PPO:
         self.critic = Critic(input_size).to(self.device)
         self.actor_optim = Adam(self.actor.parameters(), lr=lr_actor)
         self.critic_optim = Adam(self.critic.parameters(), lr=lr_critic)
+        self.num_actions = enquirer.out_dim
 
         # hyperparameters
         self.grad_clip = grad_clip

@@ -77,7 +77,7 @@ def train(use_codebook: bool, verification: bool, sd_file_gv: str, seed: int,
         enquirer = CodebookEnquirer(len(word_inds), dset.emb_dim)
         enquirer.load_codebook(codebook[word_inds], update_stats=True)
     else:
-        enquirer = Enquirer(emb_dim=dset.emb_dim, n_outputs=dset.vocab_size)
+        enquirer = Enquirer(emb_dim=dset.emb_dim, out_dim=dset.vocab_size)
         word_inds = None
     ppo = PPO(enquirer, dset.emb_dim, device=device, lr_actor=lr_actor,
               lr_critic=lr_critic, ppo_clip=ppo_clip, entropy=entropy,
@@ -136,8 +136,10 @@ def train(use_codebook: bool, verification: bool, sd_file_gv: str, seed: int,
 
             # evaluate on validation set
             if (i + 1) % eval_period == 0:
-                r_avg = evaluate(ppo, env, "val", num_speakers=num_speakers,
-                                 num_words=num_words, progress_bar=False)
+                r_avg, actions = evaluate(
+                    ppo, env, "val", num_speakers=num_speakers,
+                    num_words=num_words, progress_bar=False
+                )
                 if r_avg > max_reward:
                     max_reward = r_avg
                     ppo.save(output_dir)
@@ -145,6 +147,9 @@ def train(use_codebook: bool, verification: bool, sd_file_gv: str, seed: int,
                 avg_rewards[i // eval_period] = r_avg
                 writer.add_scalar("reward/val", r_avg,
                                   global_step=episode_count)
+                writer.add_histogram("word_freqs", actions,
+                                     bins=torch.arange(dset.vocab_size) + 0.5,
+                                     global_step=episode_count)
                 ppo.train()
 
     # save hyperparams and best reward (accuracy)
@@ -222,9 +227,14 @@ def test(use_codebook: bool, verification: bool, all_subsets: bool,
     if all_subsets:
         subsets = ["train", "val"] + subsets
     for subset in subsets:
-        r = evaluate(ppo, env, subset, num_speakers, num_words,
-                     episodes, num_envs, True)
+        r, actions = evaluate(ppo, env, subset, num_speakers, num_words,
+                              episodes, num_envs, True)
         print(f"Average reward (accuracy) on {subset}: {r}")
+        plt.figure()
+        plt.hist(actions, bins=np.arange(dset.vocab_size) + 0.5)
+        plt.xticks(np.arange(0, dset.vocab_size))
+        plt.savefig(f"output/word_frequencies_{subset}.png")
+        plt.close()
 
 
 def evaluate(ppo: PPO, env: Union[IsrEnvironment, IsvEnvironment],
@@ -244,6 +254,7 @@ def evaluate(ppo: PPO, env: Union[IsrEnvironment, IsvEnvironment],
                           "num_words": num_words}
     if not is_isv:
         state_reset_kwargs["num_speakers"] = num_speakers
+    all_actions = torch.zeros((episodes * num_words), dtype=torch.int64)
     while performed < episodes:
         cur_envs = min(episodes - performed, parallel_envs)
         states = env.reset(**state_reset_kwargs)
@@ -251,6 +262,9 @@ def evaluate(ppo: PPO, env: Union[IsrEnvironment, IsvEnvironment],
                                    dtype=torch.int64)
         for i in range(num_words):
             actions, _, _ = ppo.step(states, past_actions[:, :i])
+            start = performed * num_words + parallel_envs * i
+            end = start + parallel_envs
+            all_actions[start:end] = actions
             new_states, rewards = env.step(actions)
             states = new_states
             past_actions[:, i] = actions
@@ -264,7 +278,7 @@ def evaluate(ppo: PPO, env: Union[IsrEnvironment, IsvEnvironment],
     if progress_bar:
         pbar.close()
 
-    return np.mean(all_rewards)
+    return np.mean(all_rewards), all_actions
 
 
 def create_log_dir(root="output/enquirer_logs"):
