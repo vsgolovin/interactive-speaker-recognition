@@ -5,10 +5,13 @@ from tqdm import tqdm
 import click
 from kaldi_io import read_vec_flt_scp
 import numpy as np
+import torch
 from isr import timit
+from isr.cpc import CPC
 
 
 DATA_DIR = Path("./data")
+WORDS_DIR = DATA_DIR / "words"
 NOISE_DICT = {544: "rain", 489: "car", 334: "crowd", 435: "typing", 587: "hum",
               20: "white"}
 
@@ -22,12 +25,11 @@ def cli():
 @click.option("--snr", type=int, default=3, help="signal-to-noise ratio")
 def add_noise(snr: int):
     data = timit.TimitCorpus(DATA_DIR / "TIMIT")
-    words_dir = DATA_DIR / "words"
-    if not words_dir.exists():
-        data.split_common_sentences(words_dir)
+    if not WORDS_DIR.exists():
+        data.split_common_sentences(WORDS_DIR)
     for num, label in tqdm(NOISE_DICT.items()):
         data.add_noise_to_words(
-            words_dir=words_dir,
+            words_dir=WORDS_DIR,
             noise_file=DATA_DIR / "noise" / f"noise-free-sound-{num:04d}.wav",
             save_to=DATA_DIR / f"words_{label}",
             snr=snr
@@ -41,7 +43,7 @@ def kaldi_data_prep(noise: bool):
     kaldi_root = os.environ["KALDI_ROOT"]
     data = timit.TimitCorpus(DATA_DIR / "TIMIT")
     data.kaldi_data_prep(
-        words_dir=DATA_DIR / "words",
+        words_dir=WORDS_DIR,
         kaldi_root=kaldi_root,
         output_dir=DATA_DIR / "kaldi",
         noise_names=NOISE_DICT.values() if noise else []
@@ -90,6 +92,20 @@ def get_speaker_embeddings(keys: Iterable[str],
         mask = (speaker_ids == speaker)
         out[speaker] = embeddings[mask].mean(0)
     return out
+
+
+@cli.command()
+@click.argument("state_dict", type=click.Path())
+@click.option("-e", "--encoder", type=click.Choice(["resnet", "ln"]),
+              default="ln", help="CPC model encoder architecture")
+@click.option("--rnn", type=click.Choice(["gru", "lstm"]), default="gru",
+              help="CPC model RNN architecture")
+def extract_cpc_embeddings(state_dict: str, encoder: str, rnn: str):
+    encoder = "ResnetEncoder" if encoder == "resnet" else "LayerNormEncoder"
+    model = CPC(512, 256, encoder, rnn.upper())
+    model.load_state_dict(torch.load(state_dict, map_location="cpu"))
+    data = timit.TimitCorpus(DATA_DIR / "TIMIT")
+    data.cpc_data_prep(model.eval(), WORDS_DIR, DATA_DIR / "cpc")
 
 
 if __name__ == "__main__":

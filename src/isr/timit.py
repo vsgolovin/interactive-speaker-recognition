@@ -8,6 +8,8 @@ import soundfile as sf
 import torch
 from torch import Tensor
 import torchaudio
+from tqdm import tqdm
+from isr.cpc import CPC
 
 
 class TimitCorpus:
@@ -119,9 +121,7 @@ class TimitCorpus:
         assert kaldi_root.exists() and kaldi_root.is_dir()
 
         # extract single word recordings if not done previously
-        words_dir = Path(words_dir)
-        if not words_dir.exists():
-            self.split_common_sentences(words_dir)
+        self._extract_words_if_needed(words_dir)
 
         # check for sph2pipe
         sph2pipe = kaldi_root / "tools/sph2pipe_v2.5/sph2pipe"
@@ -199,6 +199,78 @@ class TimitCorpus:
         wav_scp.close()
         utt2spk.close()
         spk2utt.close()
+
+    def _extract_words_if_needed(self, words_dir: Union[Path, str]):
+        words_dir = Path(words_dir)
+        if not words_dir.exists():
+            self.split_common_sentences(words_dir)
+
+    def cpc_data_prep(self, model: CPC, words_dir: Union[Path, str],
+                      output_dir: Union[Path, str]):
+        """
+        Extract CPC embeddings for all recordings.
+        """
+        self._extract_words_if_needed(words_dir)
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # extract speker embeddings
+        label2subset = {"TRN": "train", "TST": "test"}
+        for subset in label2subset.values():
+            data_hidden = {}
+            data_context = {}
+
+            # extract embeddings for every sentence
+            for spkr_id, spkr_info in tqdm(self.spkrinfo.iterrows()):
+                # check if speaker is in the current subset
+                if label2subset[spkr_info["Use"]] != subset:
+                    continue
+
+                spkr_dir = self._get_speaker_directory(spkr_id, spkr_info)
+                sentences = sorted(self.spkrsent[spkr_id])
+                assert len(sentences) == 8
+
+                # sentence embeddings (with hardcoded dimensions :))
+                se_hidden = np.zeros((len(sentences), 512), dtype=np.float64)
+                se_context = np.zeros((len(sentences), 256), dtype=np.float64)
+                for i, sentence_id in enumerate(sentences):
+                    wav_file = spkr_dir / (sentence_id + ".WAV")
+                    wfm, _ = torchaudio.load(wav_file)
+                    with torch.no_grad():
+                        z_emb, c_emb = model(wfm.unsqueeze(0))
+                    se_hidden[i] = z_emb.squeeze(0).numpy()\
+                        .astype(np.float64).mean(0)
+                    se_context[i] = c_emb.squeeze(0).numpy()\
+                        .astype(np.float64).mean(0)
+
+                # average sentence embeddings
+                data_hidden[spkr_id] = se_hidden.mean(0).astype(np.float32)
+                np.savez(output_dir / f"{subset}.npz", **data_hidden)
+                data_context[spkr_id] = se_context.mean(0).astype(np.float32)
+                np.savez(output_dir / f"{subset}_context.npz", **data_context)
+
+        # extract word embeddings
+        if not self.words:
+            words = read_words_txt(words_dir / "WORDS.TXT")
+        else:
+            words = self.words
+        data_hidden = {}
+        data_context = {}
+        for spkr_id in tqdm(self.spkrinfo.index):
+            spkr_dir = words_dir / spkr_id
+            for word_id in words:
+                wav_file = spkr_dir / f"{word_id}.WAV"
+                wfm, _ = torchaudio.load(wav_file)
+                delta = 160 - wfm.size(1)
+                if delta > 0:
+                    wfm = torch.nn.functional.pad(wfm, (0, delta))
+                with torch.no_grad():
+                    z_emb, c_emb = model(wfm.unsqueeze(0))
+                utt_id = spkr_id + "_" + word_id
+                data_hidden[utt_id] = z_emb.squeeze(0).mean(0).numpy()
+                data_context[utt_id] = c_emb.squeeze(0).mean(0).numpy()
+        np.savez(output_dir / "words.npz", **data_hidden)
+        np.savez(output_dir / "words_context.npz", **data_context)
 
 
 def read_prompts(file: Union[Path, str]) -> dict:
