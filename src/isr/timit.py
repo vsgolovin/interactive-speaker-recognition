@@ -383,6 +383,11 @@ class TimitXVectors:
     """
     Dataset of X-Vector embeddings for speakers, sentences and words.
     """
+
+    TRAIN_NPZ_FILE = "xvectors_train/spk_xvector.npz"
+    TEST_NPZ_FILE = "xvectors_test/spk_xvector.npz"
+    WORDS_NPZ_FILE = "xvectors_words/xvector.npz"
+
     def __init__(self, data_dir: Union[Path, str] = "./data",
                  val_size: float = 0.2, seed: Optional[int] = None,
                  noisy_words: bool = False):
@@ -443,10 +448,10 @@ class TimitXVectors:
 
         # load embeddings
         # speaker_id ("ABC0") -> speaker embedding
-        xv_train = np.load(data_dir / "xvectors_train/spk_xvector.npz")
-        xv_test = np.load(data_dir / "xvectors_test/spk_xvector.npz")
+        xv_train = np.load(data_dir / self.TRAIN_NPZ_FILE)
+        xv_test = np.load(data_dir / self.TEST_NPZ_FILE)
         # f"{speaker_id}_{word_id}" -> word embedding
-        xv_words = [np.load(data_dir / "xvectors_words/xvector.npz")]
+        xv_words = [np.load(data_dir / self.WORDS_NPZ_FILE)]
         for noise_type in self.noise_types[1:]:
             xv_words.append(
                 np.load(data_dir / f"xvectors_words_{noise_type}/xvector.npz")
@@ -566,3 +571,13 @@ class TimitXVectors:
                                 for spkr in self.speakers[subset]])
         codebook = wv_stack.mean(0)
         return codebook
+
+
+class TimitCPC(TimitXVectors):
+    TRAIN_NPZ_FILE = "cpc/train.npz"
+    TEST_NPZ_FILE = "cpc/test.npz"
+    WORDS_NPZ_FILE = "cpc/words.npz"
+
+    def __init__(self, data_dir: Union[Path, str] = "./data",
+                 val_size: float = 0.2, seed: Optional[int] = None):
+        super().__init__(data_dir, val_size, seed, False)

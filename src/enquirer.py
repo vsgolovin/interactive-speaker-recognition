@@ -28,6 +28,8 @@ def cli():
 @click.option("--sd-file-gv", type=click.Path(),
               default="./models/guesser.pth",
               help="path to file with guesser/verifier state_dict")
+@click.option("--cpc", is_flag=True,
+              help="whether to use CPC model embeddings")
 @click.option("--seed", type=int, default=2008, help="global seed")
 @click.option("--split-seed", type=int, default=42,
               help="seed used to perform train-val split")
@@ -60,16 +62,20 @@ def cli():
               help="PPO entropy penalty coefficient")
 @click.option("--grad-clip", type=float, default=1.0,
               help="PPO gradient clipping")
-def train(use_codebook: bool, verification: bool, sd_file_gv: str, seed: int,
-          split_seed: int, noise: bool, num_speakers: int, num_words: int,
-          backend: str, num_envs: int, episodes_per_update: int,
-          eval_period: int, num_updates: int, batch_size: int,
-          epochs_per_update: int, lr_actor: float, lr_critic: float,
-          ppo_clip: float, entropy: float, grad_clip: float):
+def train(use_codebook: bool, verification: bool, sd_file_gv: str, cpc: bool,
+          seed: int, split_seed: int, noise: bool, num_speakers: int,
+          num_words: int, backend: str, num_envs: int,
+          episodes_per_update: int, eval_period: int, num_updates: int,
+          batch_size: int, epochs_per_update: int, lr_actor: float,
+          lr_critic: float, ppo_clip: float, entropy: float, grad_clip: float):
     seed_everything(seed)
     hparams = locals()
     output_dir = Path("output")
-    dset = timit.TimitXVectors(seed=split_seed, noisy_words=noise)
+
+    if not cpc:
+        dset = timit.TimitXVectors(seed=split_seed, noisy_words=noise)
+    else:
+        dset = timit.TimitCPC(seed=split_seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if use_codebook:
         codebook = dset.create_codebook("train")
@@ -179,6 +185,8 @@ def train(use_codebook: bool, verification: bool, sd_file_gv: str, seed: int,
 @click.option("--sd-file-gv", type=click.Path(),
               default="./models/guesser.pth",
               help="path to file with guesser/verifier state_dict")
+@click.option("--cpc", is_flag=True,
+              help="whether to use CPC model embeddings")
 @click.option("--seed", type=int, default=2008, help="global seed")
 @click.option("--split-seed", type=int, default=42,
               help="seed used to perform train-val split")
@@ -195,11 +203,14 @@ def train(use_codebook: bool, verification: bool, sd_file_gv: str, seed: int,
 @click.option("--episodes", "--test-games", type=int, default=20000,
               help="total number of episodes (games) to run")
 def test(use_codebook: bool, verification: bool, all_subsets: bool,
-         sd_file: str, sd_file_gv: str, seed: int, split_seed: int,
+         sd_file: str, sd_file_gv: str, cpc: bool, seed: int, split_seed: int,
          noise: bool, num_speakers: int, num_words: int, backend: str,
          num_envs: int, episodes: int):
     seed_everything(seed)
-    dset = timit.TimitXVectors(seed=split_seed, noisy_words=noise)
+    if not cpc:
+        dset = timit.TimitXVectors(seed=split_seed, noisy_words=noise)
+    else:
+        dset = timit.TimitCPC(seed=split_seed)
     if use_codebook:
         codebook = dset.create_codebook("train")
         word_inds = torch.arange(1, dset.vocab_size, 2)  # [1, 3, ..., 19]
