@@ -18,6 +18,8 @@ def cli():
 @cli.command()
 @click.option("--sd-file", type=click.Path(), default="./output/verifier.pth",
               help="file to save verifier state_dict to")
+@click.option("--cpc", is_flag=True,
+              help="whether to use CPC model embeddings")
 @click.option("--seed", type=int, default=2303, help="global seed")
 @click.option("--split-seed", type=int, default=42,
               help="seed used to perform train-val split")
@@ -35,12 +37,12 @@ def cli():
 @click.option("--lr", type=float, default=1e-4, help="learning rate")
 @click.option("--weight-decay", type=float, default=1e-4,
               help="L2 regularization")
-def train(sd_file: str, seed: int, split_seed: int, noise: bool,
+def train(sd_file: str, cpc: bool, seed: int, split_seed: int, noise: bool,
           num_words: int, backend: str, batch_size: int, iterations: int,
           max_epochs: int, lr: float, weight_decay: float):
     pl.seed_everything(seed)
-    dm = XVectorsForVerifier(num_words, batch_size, iterations,
-                             seed=split_seed, noisy_words=noise)
+    dm = VerifierDataModule(cpc, num_words, batch_size, iterations,
+                            seed=split_seed, noisy_words=noise)
     verifier = LitVerifier(backend, lr, weight_decay)
     early_stopping = EarlyStopping(monitor="val_loss", patience=5, mode="min")
     save_best = ModelCheckpoint(monitor="val_loss", mode="min", save_top_k=1,
@@ -61,6 +63,8 @@ def train(sd_file: str, seed: int, split_seed: int, noise: bool,
 @click.option("-A/--all", "all_subsets", is_flag=True, default=False)
 @click.option("--sd-file", type=click.Path(), default="./output/verifier.pth",
               help="path to file with guesser state_dict")
+@click.option("--cpc", is_flag=True,
+              help="whether to use CPC model embeddings")
 @click.option("--seed", type=int, default=2303, help="global seed")
 @click.option("--split-seed", type=int, default=42,
               help="seed used to perform train-val split")
@@ -73,13 +77,13 @@ def train(sd_file: str, seed: int, split_seed: int, noise: bool,
 @click.option("--batch-size", type=int, default=100, help="batch size")
 @click.option("--test-games", type=int, default=20000,
               help="total number of games (batch_size * iterations)")
-def test(all_subsets: bool, sd_file: str, seed: int, split_seed: int,
-         noise: bool, num_words: int, backend: str, batch_size: int,
-         test_games: int):
+def test(all_subsets: bool, sd_file: str, cpc: bool, seed: int,
+         split_seed: int, noise: bool, num_words: int, backend: str,
+         batch_size: int, test_games: int):
     pl.seed_everything(seed)
-    dm = XVectorsForVerifier(num_words, batch_size,
-                             iterations_per_epoch=test_games//batch_size,
-                             seed=split_seed, noisy_words=noise)
+    dm = VerifierDataModule(cpc, num_words, batch_size,
+                            iterations_per_epoch=test_games//batch_size,
+                            seed=split_seed, noisy_words=noise)
     verifier = LitVerifier(backend)
     verifier.model.load_state_dict(torch.load(sd_file,
                                               map_location="cpu"))
@@ -139,15 +143,18 @@ class LitVerifier(pl.LightningModule):
         self.model.load_state_dict(torch.load(f))
 
 
-class XVectorsForVerifier(pl.LightningDataModule):
-    def __init__(self, num_words: int, batch_size: int,
+class VerifierDataModule(pl.LightningDataModule):
+    def __init__(self, cpc: bool, num_words: int, batch_size: int,
                  iterations_per_epoch: int,
                  data_dir: Union[Path, str] = "./data", val_size: float = 0.2,
                  seed: Optional[int] = None, noisy_words: bool = False):
         super().__init__()
         self.T = num_words
-        self.dset = timit.TimitXVectors(data_dir, val_size, seed,
-                                        noisy_words=noisy_words)
+        if not cpc:
+            self.dset = timit.TimitXVectors(data_dir, val_size, seed,
+                                            noisy_words=noisy_words)
+        else:
+            self.dset = timit.TimitCPC(data_dir, val_size, seed)
         self.batch_size = batch_size
         self.iterations = iterations_per_epoch
         self.agent = RandomAgent(total_words=self.dset.vocab_size)
