@@ -96,15 +96,45 @@ def test_packing_for_verifier():
 @pytest.mark.parametrize("b,K,d", [(3, 1, 6), (1, 3, 10), (8, 5, 64)])
 @pytest.mark.parametrize("T,t", [(3, 0), (3, 1), (3, 3), (5, 4)])
 def test_pack_unpack(b: int, K: int, T: int, t: int, d: int):
-    if K > 1:
-        g = torch.randn((b, K, d))
-    else:
-        g = torch.randn((b, d))
+    """
+    Pack and then unpack states from parallel environments
+    (same number of speakers, same number of requested words)
+    """
+    g_shape = (b, K, d) if K != 1 else (b, d)
+    g = torch.randn(g_shape)
     x = torch.randn((b, t, d)) if t > 0 else None
     packed = envtools.pack_states(g, x, T)
-    g_out, x_out = envtools.unpack_states(packed)
+    g_out, x_out, lengths = envtools.unpack_states(packed)
+    t_out = lengths[0].item()
     assert (torch.allclose(g, g_out)
-            and ((t == 0 and x_out is None) or torch.allclose(x, x_out)))
+            and torch.all(lengths == t_out)
+            and ((t == 0 and t_out == 0)
+                 or torch.allclose(x, x_out[:, :t_out])))
+
+
+@pytest.mark.parametrize("b", [1, 2, 8])
+@pytest.mark.parametrize("d", [4, 16])
+@pytest.mark.parametrize("K,T", [(1, 2), (5, 3), (10, 1)])
+def test_unpack_from_buffer(b: int, K: int, T: int, d: int):
+    g_shape = (b, K, d) if K != 1 else (b, d)
+    g = torch.randn(g_shape)
+    x = torch.randn((b, T, d))
+    buffer = []
+    for t in range(T + 1):
+        buffer.append(envtools.pack_states(
+            voice_prints=g,
+            word_embeddings=None if t == 0 else x[:, :t],
+            num_words=T
+        ))
+    buffer = torch.cat(buffer, 0)
+    inds = torch.randperm(len(buffer))
+    g_out, x_out, lengths = envtools.unpack_states(buffer[inds])
+    x_out_list = [x_i[:t] for x_i, t in zip(x_out, lengths)]
+    x_ans_list = [x[ind % b, :ind // b, :] for ind in inds]
+    g_repeats = (T + 1, 1, 1) if K != 1 else (T + 1, 1)
+    assert (torch.allclose(g.repeat(g_repeats)[inds], g_out)
+            and all(torch.allclose(output, ans)
+                    for output, ans in zip(x_out_list, x_ans_list)))
 
 
 def test_append():

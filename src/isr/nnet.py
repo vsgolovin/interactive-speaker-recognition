@@ -2,6 +2,7 @@ from typing import Optional
 import torch
 from torch import nn, Tensor
 from torch.nn import functional as F
+from torch.nn.utils.rnn import pack_padded_sequence, unpack_sequence
 from isr import utils
 
 
@@ -93,15 +94,20 @@ class Enquirer(nn.Module):
             nn.Softmax(dim=-1) if out_dim > 1 else nn.Sigmoid()
         )
 
-    def forward(self, G_hat: Tensor, X: Optional[Tensor] = None) -> Tensor:
+    def forward(self, G_hat: Tensor, X: Optional[Tensor] = None,
+                t: Optional[Tensor] = None) -> Tensor:
         bs = G_hat.size(0)
         start = self.start_token.repeat((bs, 1, 1))
-        if X is None:
-            inp = start
+        if X is None or torch.all(t == 0):
+            last_hidden = self.lstm(start)[0][:, -1, :]
         else:
-            inp = torch.cat([start, X], dim=1)
-        last_output = self.lstm(inp)[0][:, -1, :]  # [batch, d * 2]
-        return self.mlp(torch.cat([last_output, G_hat], 1))
+            start_x = torch.cat([start, X], dim=1)
+            seq = pack_padded_sequence(start_x, lengths=t + 1,
+                                       batch_first=True, enforce_sorted=False)
+            hidden_packed = self.lstm(seq)[0]
+            last_hidden = torch.stack(
+                [hidden[-1] for hidden in unpack_sequence(hidden_packed)])
+        return self.mlp(torch.cat([last_hidden, G_hat], 1))
 
 
 class CodebookEnquirer(Enquirer):

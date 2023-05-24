@@ -88,9 +88,9 @@ class Actor(nn.Module):
         self.model = model
 
     def forward(self, states: Tensor) -> Tensor:
-        g, x = unpack_states(states)
+        g, x, lengths = unpack_states(states)
         g_hat = g_to_g_hat(g)
-        return self.model(g_hat, x)
+        return self.model(g_hat, x, lengths)
 
     @torch.no_grad()
     def act(self, states: Tensor, past_actions: Optional[Tensor] = None
@@ -116,9 +116,9 @@ class Actor(nn.Module):
         Return probabilities of actions acc. to current policy
         and entropy of every action distribution
         """
-        g, x = unpack_states(states)
+        g, x, lengths = unpack_states(states)
         g_hat = g_to_g_hat(g)
-        probs_full = torch.softmax(self.model(g_hat, x), 1)
+        probs_full = torch.softmax(self.model(g_hat, x, lengths), 1)
         entropy = -torch.sum(probs_full * torch.log(probs_full), 1)
         probs = probs_full.gather(1, actions.view(-1, 1))
         return probs, entropy
@@ -130,9 +130,9 @@ class Critic(nn.Module):
         self.model = Enquirer(emb_dim=input_size, out_dim=1)
 
     def forward(self, states: Tensor) -> Tensor:
-        g, x = unpack_states(states)
+        g, x, lengths = unpack_states(states)
         g_hat = g_to_g_hat(g)
-        return self.model(g_hat, x)
+        return self.model(g_hat, x, lengths)
 
 
 class PPO:

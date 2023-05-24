@@ -12,7 +12,7 @@ def pack_states(voice_prints: Tensor, word_embeddings: Optional[Tensor] = None,
     batch of states (stack([info, g, x])).
     """
     # inspect input
-    if voice_prints.ndim == 2:
+    if voice_prints.ndim == 2:  # 1 speaker => verification
         batch_size, d_emb = voice_prints.shape
         num_speakers = 1
     else:
@@ -40,20 +40,22 @@ def pack_states(voice_prints: Tensor, word_embeddings: Optional[Tensor] = None,
     return packed
 
 
-def unpack_states(packed: Tensor) -> Tuple[Tensor, Tensor]:
+def unpack_states(packed: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
     "Extract voice prints and word embeddings from a batch of states"
-    num_speakers, num_words, num_req_words = packed[0, 0, :3] \
-        .cpu().numpy().astype(np.int64)
-    _, g, x, _ = torch.split(
+    info = packed[:, 0, :3]
+    num_speakers = int(info[0, 0].item())
+    assert torch.all(info[:, 0] == num_speakers)
+    num_words = int(info[0, 1].item())
+    assert torch.all(info[:, 1] == num_words)
+    num_req_words = info[:, 2].cpu().long()
+    _, g, x = torch.split(
         packed,
-        [1, num_speakers, num_req_words, num_words - num_req_words],
+        [1, num_speakers, num_words],
         dim=1
     )
-    if num_req_words == 0:
-        x = None
     if num_speakers == 1:
         g = g.squeeze(1)
-    return g, x
+    return g, x, num_req_words
 
 
 def append_word_vectors(packed: Tensor, x: Tensor, num_speakers: int,
@@ -124,7 +126,7 @@ class IsrEnvironment:
             self.noise_inds = torch.full((batch_size,), fill_value=noise_ind,
                                          dtype=torch.int64)
         self.states = pack_states(voice_prints, None, num_words)
-        return self.states
+        return self.states.clone()
 
     def _step(self, word_inds: Tensor) -> Tensor:
         word_inds = word_inds.cpu()
@@ -145,12 +147,13 @@ class IsrEnvironment:
             return self.states, torch.zeros((self.batch_size,))
 
         # final step => evaluate guesser
-        g, x = unpack_states(self.states)
+        g, x, lengths = unpack_states(self.states)
+        assert torch.all(lengths == self.num_words)
         with torch.no_grad():
             output = self.model(g, x)
             predictions = torch.argmax(output, 1)
             rewards = (predictions == self.targets).to(torch.float32)
-            return self.states, rewards
+            return self.states.clone(), rewards
 
 
 class IsvEnvironment(IsrEnvironment):
@@ -172,7 +175,7 @@ class IsvEnvironment(IsrEnvironment):
 
         # intermediate steps
         if self.word_index < self.num_words:
-            return self.states, torch.zeros((self.batch_size,))
+            return self.states.clone(), torch.zeros((self.batch_size,))
 
         # final step => evaluate verifier
         g, x = unpack_states(self.states)
@@ -180,4 +183,4 @@ class IsvEnvironment(IsrEnvironment):
             output = self.model(g, x)
             predictions = torch.round(output).long()
             rewards = (predictions == self.targets).float()
-            return self.states, rewards
+            return self.states.clone(), rewards
