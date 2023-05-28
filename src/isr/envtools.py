@@ -178,7 +178,7 @@ class IsvEnvironment(IsrEnvironment):
             return self.states.clone(), torch.zeros((self.batch_size,))
 
         # final step => evaluate verifier
-        g, x = unpack_states(self.states)
+        g, x, _ = unpack_states(self.states)
         with torch.no_grad():
             output = self.model(g, x)
             predictions = torch.round(output).long()
