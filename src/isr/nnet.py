@@ -164,8 +164,9 @@ class CodebookEnquirer(Enquirer):
             self.sigma = codebook.std(0)
         self.codebook = (codebook - self.mu) / self.sigma
 
-    def forward(self, g: Tensor, x: Tensor) -> Tensor:
-        word_emb = super().forward(g, x)
+    def forward(self, g: Tensor, x: Optional[Tensor] = None,
+                t: Optional[Tensor] = None) -> Tensor:
+        word_emb = super().forward(g, x, t)
         distances = utils.pairwise_mse(word_emb, self.codebook)
         return self.softmax(-distances / self.temperature)
 

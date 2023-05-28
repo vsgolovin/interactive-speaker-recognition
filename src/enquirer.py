@@ -200,27 +200,30 @@ def test(use_codebook: bool, verification: bool, all_subsets: bool,
          num_envs: int, episodes: int):
     seed_everything(seed)
     dset = timit.TimitXVectors(seed=split_seed, noisy_words=noise)
+    device_type = "cuda" if torch.cuda.is_available() else "cpu"
     if use_codebook:
         codebook = dset.create_codebook("train")
         word_inds = torch.arange(1, dset.vocab_size, 2)  # [1, 3, ..., 19]
         enquirer = CodebookEnquirer(len(word_inds), dset.emb_dim)
-        enquirer.load_state_dict(torch.load(sd_file, map_location="cpu"))
+        enquirer.load_state_dict(torch.load(sd_file))
         enquirer.load_codebook(codebook[word_inds], update_stats=False)
     else:
         enquirer = Enquirer(512, len(dset.words))
-        enquirer.load_state_dict(torch.load(sd_file, map_location="cpu"))
+        enquirer.load_state_dict(torch.load(sd_file, map_location=device_type))
         word_inds = None
-    ppo = PPO(enquirer, dset.emb_dim, device=torch.device("cpu"))
+    ppo = PPO(enquirer, dset.emb_dim, device=torch.device(device_type))
 
     if verification:
         verifier = Verifier(emb_dim=dset.emb_dim, backend=backend)
         if sd_file_gv == "./models/guesser.pth":
             sd_file_gv = "./models/verifier.pth"
-        verifier.load_state_dict(torch.load(sd_file_gv, map_location="cpu"))
+        verifier.load_state_dict(torch.load(sd_file_gv,
+                                            map_location=device_type))
         env = IsvEnvironment(dset, verifier, word_inds)
     else:
         guesser = Guesser(emb_dim=dset.emb_dim)
-        guesser.load_state_dict(torch.load(sd_file_gv, map_location="cpu"))
+        guesser.load_state_dict(torch.load(sd_file_gv,
+                                           map_location=device_type))
         env = IsrEnvironment(dset, guesser, word_inds)
 
     subsets = ["test"]

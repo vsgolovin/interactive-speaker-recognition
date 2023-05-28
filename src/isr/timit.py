@@ -490,7 +490,7 @@ class TimitXVectors:
             dim=0)
 
     def create_codebook(self, subset: str = "train") -> Tensor:
-        wv_stack = torch.stack([self.word_vectors[spkr]
+        wv_stack = torch.stack([self.word_vectors[0][spkr]
                                 for spkr in self.speakers[subset]])
         codebook = wv_stack.mean(0)
         return codebook
