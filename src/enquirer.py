@@ -56,16 +56,20 @@ def cli():
               help="PPO critic learning rate")
 @click.option("--ppo-clip", type=float, default=0.2,
               help="PPO clipping parameter (epsilon)")
-@click.option("--entropy", type=float, default=0.01,
+@click.option("--entropy", type=float, default=0.02,
               help="PPO entropy penalty coefficient")
 @click.option("--grad-clip", type=float, default=1.0,
               help="PPO gradient clipping")
+@click.option("--lambda-gae", type=float, default=1.0,
+              help="lambda coefficient for Generalized Advantage Estimation")
+@click.option("--gamma", type=float, default=0.99, help="discount factor")
 def train(use_codebook: bool, verification: bool, sd_file_gv: str, seed: int,
           split_seed: int, noise: bool, num_speakers: int, num_words: int,
           backend: str, num_envs: int, episodes_per_update: int,
           eval_period: int, num_updates: int, batch_size: int,
           epochs_per_update: int, lr_actor: float, lr_critic: float,
-          ppo_clip: float, entropy: float, grad_clip: float):
+          ppo_clip: float, entropy: float, grad_clip: float,
+          lambda_gae: float, gamma: float):
     seed_everything(seed)
     hparams = locals()
     output_dir = Path("output")
@@ -82,7 +86,7 @@ def train(use_codebook: bool, verification: bool, sd_file_gv: str, seed: int,
     ppo = PPO(enquirer, dset.emb_dim, device=device, lr_actor=lr_actor,
               lr_critic=lr_critic, ppo_clip=ppo_clip, entropy=entropy,
               grad_clip=None if grad_clip == 0 else grad_clip)
-    buffer = Buffer(num_words=num_words)
+    buffer = Buffer(num_words=num_words, lambda_gae=lambda_gae, gamma=gamma)
     if verification:
         verifier = Verifier(emb_dim=dset.emb_dim, backend=backend)
         if sd_file_gv == "./models/guesser.pth":
@@ -158,13 +162,13 @@ def train(use_codebook: bool, verification: bool, sd_file_gv: str, seed: int,
                        run_name=str(log_dir.absolute()))
 
     # plot avg. reward on validation set
-    eval_step = episodes_per_update * eval_period
-    episode_count = np.arange(eval_step, NUM_EPISODES + 1, eval_step)
-    plt.figure()
-    plt.plot(episode_count, avg_rewards, "bo-")
-    plt.ylabel("Avg. reward on validation set")
-    plt.xlabel("Episodes")
-    plt.savefig(output_dir / "enquirer_training.png", dpi=75)
+    # eval_step = episodes_per_update * eval_period
+    # episode_count = np.arange(eval_step, NUM_EPISODES + 1, eval_step)
+    # plt.figure()
+    # plt.plot(episode_count, avg_rewards, "bo-")
+    # plt.ylabel("Avg. reward on validation set")
+    # plt.xlabel("Episodes")
+    # plt.savefig(output_dir / "enquirer_training.png", dpi=75)
 
 
 @cli.command()
